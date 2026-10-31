@@ -306,6 +306,8 @@ tr:last-child td{border-bottom:0}
 .improw:last-child{border-bottom:0}
 .impinfo{min-width:0}
 .impinfo b{word-break:break-all}
+.big-pick button{font-size:14px;padding:8px 12px}
+.selbar .btn.primary{padding:6px 10px}
 </style>
 </head>
 <body>
@@ -2848,6 +2850,8 @@ function selBar(kind){
     <button class="btn sm" data-selall="${kind}" ${shown?"":"disabled"}>Select all shown (${shown})</button>
     ${n ? `<button class="btn sm" data-selclear="${kind}">Clear</button>` : ""}
     <span style="flex:1"></span>
+    ${kind==="g" && !S.readOnly ? `<button class="btn sm primary" data-act="bulk-split" ${n?"":"disabled"}>✂️ Split selected</button>` : ""}
+    <button class="btn sm" data-act="bulk-cat-${kind}" ${n?"":"disabled"}>🏷 Set category</button>
     <button class="btn sm danger-solid" data-seldel="${kind}" ${n?"":"disabled"}>🗑 Delete selected${n?` (${n})`:""}</button>
     <button class="btn sm" data-seldone="${kind}">Done</button></div>`;
 }
@@ -2909,11 +2913,109 @@ function selClick(t){
     case "sel-g": S.sel.on = !S.sel.on; S.sel.ids.clear(); render(); return true;
     case "sel-sp": S.spSel.on = !S.spSel.on; S.spSel.ids.clear(); render(); return true;
     case "imports-g": if(group()) openModal({type:"imports", kind:"g"}); return true;
+    case "bulk-split": { const g = group(); if(!g || !selectedExpenses().length){ toast("Select at least one expense (payments can't be split)."); return true; }
+      const inputs = {}; g.members.forEach(p=>inputs[p.id]=true); openModal({type:"bulksplit", method:"equal", inputs, paidBy:""}); return true; }
+    case "bulk-cat-g": if(!selectedExpenses().length){ toast("Select at least one expense (payments don't have a category)."); return true; } openModal({type:"bulkcat", kind:"g"}); return true;
+    case "bulk-cat-sp": openModal({type:"bulkcat", kind:"sp"}); return true;
     case "imports-sp": openModal({type:"imports", kind:"sp"}); return true;
   }
   return false;
 }
 EXTRA_MODALS.imports = [importsModal, bindImports];
+
+
+/* ---------- bulk split / bulk category ---------- */
+const selectedExpenses = () => S.expenses.filter(e => S.sel.ids.has(e.id) && e.kind!=="settle");
+function bulkSplitWeights(m, g){
+  const w = {};
+  if(m.method==="equal") g.members.forEach(p => { if(m.inputs[p.id]===true) w[p.id] = 1; });
+  else g.members.forEach(p => { const v = parseFloat(m.inputs[p.id]); if(v>0) w[p.id] = v; });
+  return w;
+}
+function bulkSplitCheck(m, g){
+  const w = bulkSplitWeights(m, g), sum = Object.values(w).reduce((a,v)=>a+v,0);
+  if(!Object.keys(w).length) return {ok:false, msg: m.method==="equal" ? "Pick at least one person." : "Give at least one person a value."};
+  if(m.method==="percent" && Math.abs(sum-100) > 0.001) return {ok:false, msg:`Percentages add up to ${Math.round(sum*100)/100}%, they need to make 100%.`, w};
+  return {ok:true, w};
+}
+function bulkSplitModal(m){
+  const g = group(), list = selectedExpenses(), skipped = S.sel.ids.size - list.length;
+  const total = list.reduce((a,e)=>a+e.amount,0), chk = bulkSplitCheck(m, g);
+  const per = {}; if(chk.ok) list.forEach(e => { const s = allocate(e.amount, chk.w); Object.entries(s).forEach(([id,c]) => per[id] = (per[id]||0) + c); });
+  const methods = [["equal","Equally"],["percent","%"],["shares","Shares"]];
+  return `<header><h3>Split ${list.length} expense${list.length>1?"s":""} the same way</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="s">Total ${money(total,g.currency)}${skipped?` · ${skipped} payment${skipped>1?"s":""} skipped (payments aren't split)`:""}. Each expense is split separately using the same rule. Exact amounts aren't offered here because every expense has a different total.</div>
+    <div class="field"><label>Split</label><div class="seg">${methods.map(([k,l])=>`<button type="button" data-bm="${k}" class="${m.method===k?"on":""}">${l}</button>`).join("")}</div></div>
+    <div class="splits">
+      ${g.members.map(p => `<div class="sp">
+        ${m.method==="equal" ? `<input type="checkbox" data-bin="${esc(p.id)}" ${m.inputs[p.id]===true?"checked":""}>` : av(p,g.members)}
+        <div>${esc(p.name)}</div>
+        ${m.method==="equal" ? `<div class="share">${per[p.id]?money(per[p.id],g.currency):"—"}</div>`
+          : `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px"><input class="input" type="number" min="0" step="${m.method==="percent"?"0.01":"1"}" data-bin="${esc(p.id)}" value="${esc(m.inputs[p.id]??"")}" placeholder="${m.method==="percent"?"%":"0"}"><span class="share">${per[p.id]?money(per[p.id],g.currency):""}</span></div>`}
+      </div>`).join("")}
+      <div class="split-status"><span>${m.method==="equal" ? `${Object.keys(bulkSplitWeights(m,g)).length} people` : m.method==="percent" ? `${Math.round(Object.values(bulkSplitWeights(m,g)).reduce((a,v)=>a+v,0)*100)/100}% of 100%` : `${Object.values(bulkSplitWeights(m,g)).reduce((a,v)=>a+v,0)} shares`}</span><span class="${chk.ok?"pos":"neg"}">${chk.ok?"✓ Ready":""}</span></div>
+    </div>
+    <div class="field"><label>Paid by</label><select class="input" id="bs-paid"><option value="">Keep as it is on each expense</option>${g.members.map(p=>`<option value="${esc(p.id)}" ${m.paidBy===p.id?"selected":""}>${esc(p.name)} paid for all of them</option>`).join("")}</select></div>
+    <div class="err" id="bs-err">${chk.ok?"":esc(chk.msg||"")}</div>
+  </div>
+  <footer><span></span><div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-bsdo ${chk.ok&&list.length?"":"disabled"}>Split ${list.length} expense${list.length>1?"s":""}</button></div></footer>`;
+}
+function bindBulkSplit(ov, m){
+  const g = group(), $ = s => ov.querySelector(s);
+  ov.querySelectorAll("[data-bm]").forEach(b => b.onclick = () => { if(m.method===b.dataset.bm) return; m.method = b.dataset.bm; m.inputs = {};
+    if(m.method==="equal") g.members.forEach(p=>m.inputs[p.id]=true);
+    if(m.method==="shares") g.members.forEach(p=>m.inputs[p.id]="1");
+    if(m.method==="percent") g.members.forEach(p=>m.inputs[p.id]=String(Math.round(10000/g.members.length)/100));
+    renderModal(); });
+  ov.querySelectorAll("[data-bin]").forEach(inp => {
+    const h = () => { m.inputs[inp.dataset.bin] = inp.type==="checkbox" ? inp.checked : inp.value; const pos = inp.selectionStart; const id = inp.dataset.bin;
+      renderModal(); const again = document.querySelector(`.overlay [data-bin="${CSS.escape(id)}"]`); if(again && inp.type!=="checkbox"){ again.focus(); try{ again.setSelectionRange(pos,pos); }catch{} } };
+    if(inp.type==="checkbox") inp.onchange = h; else inp.onchange = h;
+  });
+  $("#bs-paid").onchange = e => { m.paidBy = e.target.value; };
+  $("[data-bsdo]").onclick = async ev => {
+    const chk = bulkSplitCheck(m, g); if(!chk.ok) return $("#bs-err").textContent = chk.msg;
+    const btn = ev.currentTarget, list = selectedExpenses(); btn.disabled = true;
+    const inputs = {}; g.members.forEach(p => { if(m.method==="equal" ? m.inputs[p.id]===true : parseFloat(m.inputs[p.id])>0) inputs[p.id] = m.method==="equal" ? true : String(m.inputs[p.id]); });
+    const ok = await write(async () => { for(let i=0;i<list.length;i++){ btn.textContent = `Splitting ${i+1}/${list.length}…`;
+      const {needsSplit, ...rest} = list[i];
+      await S.store.saveExpense(g.id, {...rest, paidBy: m.paidBy || rest.paidBy, splitType:m.method, inputs, splits:allocate(rest.amount, chk.w)}); } },
+      `Split ${list.length} expense${list.length>1?"s":""}`);
+    if(ok){ S.sel.ids.clear(); closeModal(); render(); } else { btn.disabled = false; btn.textContent = "Try again"; }
+  };
+}
+function bulkCatModal(m){
+  const isG = m.kind==="g";
+  const pool = isG ? selectedExpenses() : S.spend.filter(x => S.spSel.ids.has(x.id));
+  const exp = isG ? pool : pool.filter(x=>x.type!=="income"), inc = isG ? [] : pool.filter(x=>x.type==="income");
+  const useInc = !isG && !exp.length && inc.length;
+  const cats = useInc ? INC_CATS : CATEGORIES, target = useInc ? inc : exp;
+  const skipped = (isG ? S.sel.ids.size : S.spSel.ids.size) - target.length;
+  return `<header><h3>Set category for ${target.length} item${target.length===1?"":"s"}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    ${skipped ? `<div class="s">${skipped} selected item${skipped>1?"s":""} will be left as ${skipped>1?"they are":"it is"} (${isG?"payments don't have a category":"income and spending use different categories"}).</div>` : ""}
+    <div class="cat-pick big-pick">${cats.map(([k,i,l])=>`<button type="button" data-bcat="${k}">${i} ${l}</button>`).join("")}</div>
+    <div class="err" id="bc-err"></div>
+  </div>
+  <footer><span></span><button class="btn" data-close>Cancel</button></footer>`;
+}
+function bindBulkCat(ov, m){
+  ov.querySelectorAll("[data-bcat]").forEach(b => b.onclick = async () => {
+    const isG = m.kind==="g", cat = b.dataset.bcat;
+    const pool = isG ? selectedExpenses() : S.spend.filter(x => S.spSel.ids.has(x.id));
+    const exp = isG ? pool : pool.filter(x=>x.type!=="income"), inc = isG ? [] : pool.filter(x=>x.type==="income");
+    const target = (!isG && !exp.length && inc.length) ? inc : exp;
+    ov.querySelectorAll("[data-bcat]").forEach(x => x.disabled = true); b.textContent = "Saving…";
+    const label = ((CAT[cat]||INC[cat])||{}).label || cat;
+    const run = async () => { for(const x of target){ const item = {...x, category:cat};
+      if(isG) await S.store.saveExpense(group().id, item); else await S.pStore.save("spending", item); } };
+    const ok = isG ? await write(run, `${target.length} set to ${label}`) : await writeP(run, `${target.length} set to ${label}`);
+    if(ok){ (isG ? S.sel : S.spSel).ids.clear(); closeModal(); render(); } else ov.querySelectorAll("[data-bcat]").forEach(x => x.disabled = false);
+  });
+}
+EXTRA_MODALS.bulksplit = [bulkSplitModal, bindBulkSplit];
+EXTRA_MODALS.bulkcat = [bulkCatModal, bindBulkCat];
 
 /* ---------- events ---------- */
 root.addEventListener("click", async e => {
