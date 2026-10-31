@@ -407,10 +407,20 @@ table.cf-table td.est{color:var(--muted);font-style:italic}
 .cf-inc:hover{background:var(--accent-soft);outline:1px dashed var(--accent)}
 .est-tag.ed{background:var(--accent-soft);color:var(--accent)}
 table.cf-table tr.cf-budget td{color:var(--accent)}
+
+.newcat-chip{border-style:dashed !important;color:var(--accent) !important;font-weight:600}
+.newcat{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;padding:10px;border:1px dashed var(--line);border-radius:10px;background:var(--panel2)}
+.newcat .input{flex:1;min-width:160px}
+.nc-icon{flex:0 0 58px !important;min-width:0 !important;text-align:center;font-size:18px;padding:6px !important}
+.nc-emojis{display:flex;gap:2px;flex-wrap:wrap;width:100%}
+.nc-emojis button{border:0;background:none;font-size:17px;padding:3px 5px;border-radius:6px;cursor:pointer}
+.nc-emojis button:hover{background:var(--accent-soft)}
+.catlist{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;padding-right:4px}
+.catrow{display:flex;gap:8px;align-items:center}
+.catrow .input{padding:7px 10px}
 </style>
 </head>
 <body>
-<!-- Your Supabase settings live in config.js -->
 <script src="config.js"></script>
 <div id="root"><div class="loading">Loading your expenses…</div></div>
 
@@ -426,6 +436,28 @@ const CATEGORIES = [
   ["education","📚","Education"],["personal","💅","Personal care"],["family","👨‍👩‍👧","Family"],["other","📦","Other"]
 ];
 const CAT = Object.fromEntries(CATEGORIES.map(([k,i,l])=>[k,{icon:i,label:l}]));
+/* ---- custom categories: your own, plus renamed built-ins (kept in your personal settings) ---- */
+const BASE_CATS = CATEGORIES.map(c => [...c]);
+const FOREIGN_CATS = {};        // custom categories other group members used on shared expenses
+let _catsSig = "";
+function applyCats(force){
+  const st = (typeof S!=="undefined" && S.settings && S.settings.cats) || {}, sig = JSON.stringify(st) + Object.keys(FOREIGN_CATS).join();
+  if(!force && sig === _catsSig) return; _catsSig = sig;
+  const edit = st.edit || {}, custom = (st.custom || []).filter(c => c && c.k && c.label);
+  const base = BASE_CATS.map(([k,i,l]) => [k, (edit[k]&&edit[k].icon) || i, (edit[k]&&edit[k].label) || l]);
+  const list = [...base.filter(c=>c[0]!=="other"), ...custom.map(c => [c.k, c.icon||"🏷️", c.label]), base.find(c=>c[0]==="other")];
+  CATEGORIES.splice(0, CATEGORIES.length, ...list);
+  Object.keys(CAT).forEach(k => delete CAT[k]);
+  Object.entries(FOREIGN_CATS).forEach(([k,v]) => CAT[k] = v);
+  list.forEach(([k,i,l]) => CAT[k] = {icon:i, label:l});
+}
+const isBaseCat = k => BASE_CATS.some(c => c[0]===k);
+const catTag = k => (!k || isBaseCat(k) || !CAT[k]) ? {} : {catLabel:CAT[k].label, catIcon:CAT[k].icon};
+function noteForeignCats(list){
+  let changed = false;
+  (list||[]).forEach(e => { if(e && e.catLabel && e.category && !isBaseCat(e.category) && !FOREIGN_CATS[e.category]){ FOREIGN_CATS[e.category] = {icon:e.catIcon||"🏷️", label:e.catLabel}; changed = true; } });
+  if(changed) applyCats(true);
+}
 const CURRENCIES = ["AED","USD","EUR","GBP","INR","PHP","SAR","QAR","KWD","OMR","BHD","PKR","EGP","CAD","AUD","SGD","JPY","CNY"];
 const PALETTE = ["#0f766e","#b45309","#7c3aed","#be123c","#1d4ed8","#4d7c0f","#c2410c","#0e7490","#a21caf","#475569"];
 
@@ -634,7 +666,7 @@ function selectGroup(id, silent){
   if(id){
     unsubExp = S.store.subExpenses(id, (list, meta) => {
       S.expenses = list.filter(e=>e && typeof e.amount==="number");
-      S.groupExp[id] = S.expenses; invalidateSpend();
+      S.groupExp[id] = S.expenses; noteForeignCats(S.expenses); invalidateSpend();
       S.expLoaded = true; render();
     }, onDbError);
   }
@@ -665,6 +697,7 @@ const root = document.getElementById("root");
 
 function render(){
   if(!S.store) return;
+  applyCats();
   S._pageRender = true; invalidateSpend();
   try { renderPage(); } finally { S._pageRender = false; }
   if(S.modal && !document.querySelector(".overlay")) renderModal();
@@ -956,6 +989,7 @@ function openModal(m){ S.modal = m; renderModal(); }
 function closeModal(){ S.modal = null; document.querySelector(".overlay")?.remove(); }
 
 function renderModal(){
+  applyCats();
   document.querySelector(".overlay")?.remove();
   const m = S.modal; if(!m) return;
   const ov = document.createElement("div"); ov.className = "overlay";
@@ -1019,7 +1053,7 @@ function expenseModal(m){
       <div class="field"><label class="amt-lbl">Amount ${curPick(m, g.currency, "ecur")}</label><input class="input amount-in" id="e-amt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(m.amount)}"><div class="calc" id="e-amt-calc">${calcPreview(m.amount, {currency:ec})}</div><div class="s conv" id="e-conv">${convNote(m, g.currency)}</div></div>
       <div class="field"><label>Date</label><input class="input" id="e-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
     </div>
-    <div class="field"><label>Category</label><div class="cat-pick">${CATEGORIES.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-cat="${k}">${i} ${l}</button>`).join("")}</div></div>
+    <div class="field"><label>Category</label><div class="cat-pick">${CATEGORIES.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-cat="${k}">${i} ${l}</button>`).join("")}${newCatChip(m)}</div>${newCatForm(m)}</div>
     <div class="field"><label>Paid by</label><select class="input" id="e-paid">${g.members.map(p=>`<option value="${esc(p.id)}" ${p.id===m.paidBy?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Split</label>
       <div class="seg">${methods.map(([k,l])=>`<button type="button" class="${m.splitType===k?"on":""}" data-method="${k}">${l}</button>`).join("")}</div>
@@ -1202,6 +1236,7 @@ function bindModal(ov){
       inp.oninput = h; inp.onchange = h;
     });
     ov.querySelectorAll("[data-ecur]").forEach(b => b.onclick = () => { syncTop(); m.cur = b.dataset.ecur; renderModal(); });
+    bindNewCat(ov, m, syncTop);
     bindAllRow(ov, g, m, "data-allsplit", () => { syncTop(); renderModal(); });
     $("[data-saveexp]").onclick = async () => {
       syncTop();
@@ -1219,7 +1254,7 @@ function bindModal(ov){
       const base = toBase(total, entryCur(m, g.currency), g.currency);
       const baseSplits = base===total ? comp.splits : allocate(base, comp.splits);
       const ok = await write(() => S.store.saveExpense(g.id, {
-        id, kind:"expense", desc:m.desc.trim(), amount:base, date:m.date||todayISO(), category:m.category,
+        id, kind:"expense", desc:m.desc.trim(), amount:base, date:m.date||todayISO(), category:m.category, ...catTag(m.category),
         paidBy:m.paidBy, splitType:m.splitType, inputs, splits:baseSplits, notes:(m.notes||"").trim(), ...((m.bank||"").trim() ? {bank:m.bank.trim()} : {}),
         createdAt: m.createdAt || Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id)), ...origTag(m, g.currency, total)
       }), m.id?"Expense updated":"Expense added");
@@ -1624,7 +1659,7 @@ function planImport(sheets, g, opts = {}){
     const idv = col.id!=null ? String(r[col.id] ?? "").trim() : "";
     const prev = idv && existing.get(idv)?.kind!=="settle" ? existing.get(idv) : null;
     pending.push({id: prev ? prev.id : uid(), createdAt: prev?.createdAt || Date.now()+i, desc, amount, date,
-      category: col.cat!=null ? catKey(r[col.cat]) : "other", paidBy: paidName ? member(paidName).id : opts.defaultPayer,
+      category: col.cat!=null ? catKey(r[col.cat]) : "other", ...catTag(col.cat!=null ? catKey(r[col.cat]) : "other"), paidBy: paidName ? member(paidName).id : opts.defaultPayer,
       notes: [col.notes, ...extraText].filter(j=>j!=null).map(j=>String(r[j] ?? "").trim()).filter(Boolean).join(" · "),
       splitHint: col.split!=null ? nrm(r[col.split]) : "",
       bank: col.bank!=null ? String(r[col.bank] ?? "").trim() : "",
@@ -1637,7 +1672,7 @@ function planImport(sheets, g, opts = {}){
     let splits, splitType, inputs = {};
     if(!p.shares.length && (opts.unsplit!=="equal" || p.splitHint.startsWith("not"))){
       plan.unsplit++;
-      plan.expenses.push({id:p.id, kind:"expense", desc:p.desc, amount:p.amount, date:p.date, category:p.category, paidBy:p.paidBy,
+      plan.expenses.push({id:p.id, kind:"expense", desc:p.desc, amount:p.amount, date:p.date, category:p.category, ...catTag(p.category), paidBy:p.paidBy,
         splitType:"equal", inputs:{}, splits:{}, needsSplit:true, notes:p.notes, createdAt:p.createdAt, ...(p.bank?{bank:p.bank}:{})});
       continue;
     }
@@ -2114,11 +2149,15 @@ function sharedItems(){
 function allSpend(){ if(!_allSpend) _allSpend = S.spend.concat(sharedItems()); return _allSpend; }
 async function loadGroupExpenses(){
   if(!S.store || !S.store.getExpenses) return;
-  for(const g of S.groups){ try { S.groupExp[g.id] = await S.store.getExpenses(g.id); } catch {} }
+  for(const g of S.groups){ try { S.groupExp[g.id] = await S.store.getExpenses(g.id); noteForeignCats(S.groupExp[g.id]); } catch {} }
   invalidateSpend(); if(PERSONAL.has(S.module)) render();
 }
 const loadGroupExpensesSoon = () => { clearTimeout(gxTimer); gxTimer = setTimeout(loadGroupExpenses, 300); };
 const hideShared = keys => { const hid = {...((S.settings||{}).sharedHidden||{})}; keys.forEach(k => hid[k] = 1); return saveSetting("sharedHidden", hid); };
+
+/* budget for a month = My Budget limits, with any per-month amounts set in the cash flow */
+const budOv = () => (S.settings.cf||{}).budgetByMonth || {};
+function budgetFor(ym){ const out = {...((S.settings.budget||{}).limits||{})}; Object.entries(budOv()[ym]||{}).forEach(([k,v]) => { out[k] = v; }); return out; }
 
 function monthTotals(ym){
   let spent = 0, income = 0, shared = 0; const byCat = {}, list = [];
@@ -2302,7 +2341,7 @@ function renderSpending(){
   const fName = [fLabel, q ? `“${S.spQ.trim()}”` : ""].filter(Boolean).join(" · ");
   return `
     ${modHead("Daily Spending", "Everything you spend and earn, day by day.",
-      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button><button class="btn sm ${(S.settings||{}).sharedAll===false?"":"on-btn"}" data-act="shared-set" title="Your share of Split & Share expenses">🤝 Shared: ${(S.settings||{}).sharedAll===false?"Off":"On"}</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
+      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button><button class="btn sm" data-act="cats">🏷️ Categories</button><button class="btn sm ${(S.settings||{}).sharedAll===false?"":"on-btn"}" data-act="shared-set" title="Your share of Split & Share expenses">🤝 Shared: ${(S.settings||{}).sharedAll===false?"Off":"On"}</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
     ${filtered ? `<div class="fsum"><span>Totals for <b>${esc(fName)}</b> in ${monthName(ym)} · ${list.length} item${list.length===1?"":"s"}</span><button class="btn sm" data-act="sp-clear-filter">✕ Clear filter</button></div>
     <div class="stats four">
       ${tile(`Spent · ${esc(fLabel || "matching")}`, pm(fSpent), "", t.spent ? `${pct(fSpent, t.spent)}% of ${pm(t.spent)} spent this month` : "")}
@@ -2359,7 +2398,7 @@ function spendModal(m){
       <div class="field"><label>Date</label><input class="input" id="p-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
     </div>
     <div class="field"><label>Description</label><input class="input" id="p-desc" value="${esc(m.desc)}" placeholder="${m.kind==="income"?"e.g. October salary":"e.g. Lunch, Careem, Carrefour"}"></div>
-    <div class="field"><label>Category</label><div class="cat-pick">${cats.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-pcat="${k}">${i} ${l}</button>`).join("")}</div></div>
+    <div class="field"><label>Category</label><div class="cat-pick">${cats.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-pcat="${k}">${i} ${l}</button>`).join("")}${m.kind==="income" ? "" : newCatChip(m)}</div>${m.kind==="income" ? "" : newCatForm(m)}</div>
     <div class="field"><label>${m.kind==="income"?"Received by":"Paid with"}</label><div class="seg">${METHODS.map(x=>`<button type="button" data-method="${x}" class="${m.method===x?"on":""}">${x}</button>`).join("")}</div></div>
     <div class="field"><label>Bank / card (optional)</label><input class="input" id="p-bank" list="bank-list" value="${esc(m.bank||"")}" placeholder="e.g. Mashreq, ADCB, Emirates NBD">${bankDatalist()}</div>
     <div class="field"><label>Notes (optional)</label><input class="input" id="p-notes" value="${esc(m.notes)}"></div>
@@ -2373,6 +2412,7 @@ function bindSpend(ov, m){
   const sync = () => { m.amount=$("#p-amt").value; m.date=$("#p-date").value; m.desc=$("#p-desc").value; m.notes=$("#p-notes").value; m.bank=$("#p-bank").value; };
   $("#p-amt").oninput = () => { $("#p-calc").innerHTML = calcPreview($("#p-amt").value, {currency:entryCur(m,PC())}); $("#p-conv").textContent = convNote(m, PC(), $("#p-amt").value); };
   ov.querySelectorAll("[data-pcur]").forEach(b => b.onclick = () => { sync(); m.cur = b.dataset.pcur; renderModal(); });
+  bindNewCat(ov, m, sync);
   ov.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { sync(); if(m.kind===b.dataset.kind) return; m.kind = b.dataset.kind; m.category = m.kind==="income" ? "salary" : "food"; renderModal(); });
   ov.querySelectorAll("[data-pcat]").forEach(b => b.onclick = () => { m.category = b.dataset.pcat; ov.querySelectorAll("[data-pcat]").forEach(x=>x.classList.toggle("on", x===b)); });
   ov.querySelectorAll("[data-method]").forEach(b => b.onclick = () => { m.method = b.dataset.method; ov.querySelectorAll("[data-method]").forEach(x=>x.classList.toggle("on", x===b)); });
@@ -2501,13 +2541,13 @@ function spExport(){
 
 /* ---------- My Budget ---------- */
 function renderBudget(){
-  const ym = S.budMonth, t = monthTotals(ym), b = S.settings.budget || {}, limits = b.limits || {};
-  const totalBudget = Object.values(limits).reduce((a,v)=>a+(v||0),0);
+  const ym = S.budMonth, t = monthTotals(ym), b = S.settings.budget || {}, limits = b.limits || {}, eff = budgetFor(ym), mo = budOv()[ym] || {};
+  const totalBudget = Object.values(eff).reduce((a,v)=>a+(v||0),0);
   const plannedIncome = b.income || 0;
   const remaining = totalBudget - t.spent;
   const isCur = ym===thisMonth(), daysLeft = isCur ? daysIn(ym) - Number(todayISO().slice(8)) + 1 : 0;
-  const shown = CATEGORIES.filter(([k]) => limits[k]>0 || t.byCat[k]>0);
-  const unused = CATEGORIES.filter(([k]) => !(limits[k]>0 || t.byCat[k]>0));
+  const shown = CATEGORIES.filter(([k]) => eff[k]>0 || limits[k]>0 || t.byCat[k]>0);
+  const unused = CATEGORIES.filter(([k]) => !(eff[k]>0 || limits[k]>0 || t.byCat[k]>0));
   const overall = statusOf(t.spent, totalBudget);
   return `
     ${modHead("My Budget", "Set a monthly limit per category and see how you're tracking.", monthNav("bud", ym))}
@@ -2523,16 +2563,18 @@ function renderBudget(){
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn sm" data-act="bud-suggest" title="Sets each limit to your average spending over the last 3 months">✨ Suggest from last 3 months</button>
         <button class="btn sm" data-act="go-cashflow" title="Your budget is used as planned spending there">📅 See in cash flow</button>
+        <button class="btn sm" data-act="cats">🏷️ Categories</button>
         ${unused.length ? `<select class="input" id="bud-add" style="width:auto;padding:6px 10px;font-size:13px"><option value="">＋ Add a category…</option>${unused.map(([k,i,l])=>`<option value="${k}">${i} ${l}</option>`).join("")}</select>` : ""}
       </div>
     </div>
     ${!shown.length && !S.budAdd.length ? `<div class="card empty"><div class="big">🎯</div><h3>No budget yet</h3><p>Add a category above, or let CashNest suggest limits from your recent spending.</p></div>` :
     `<div class="card">${[...shown, ...CATEGORIES.filter(([k])=>S.budAdd.includes(k) && !shown.some(s=>s[0]===k))].map(([k,i,l]) => {
-      const lim = limits[k]||0, sp = t.byCat[k]||0, st = statusOf(sp, lim);
+      const lim = eff[k]||0, sp = t.byCat[k]||0, st = statusOf(sp, lim), monthly = mo[k]!=null;
       return `<div class="brow">
         <div class="bname"><span class="cat sm">${i}</span><div><b>${l}</b><div class="s">${pm(sp)} spent${lim?` · ${lim-sp>=0?pm(lim-sp)+" left":pm(sp-lim)+" over"}`:""}</div></div></div>
         <div class="bbar">${lim ? progress(pct(sp,lim), st.cls) : `<div class="s">No limit set</div>`}<span class="st ${st.cls}">${st.icon} ${st.label}</span></div>
-        <div class="blim"><label class="s">Limit</label><input class="input money-in" data-setting="budget.limits.${k}" data-kind="money" value="${lim?fromCents(lim):""}" placeholder="0.00"></div>
+        <div class="blim"><label class="s">${monthly ? "Usual limit" : "Limit"}</label><input class="input money-in" data-setting="budget.limits.${k}" data-kind="money" value="${limits[k]?fromCents(limits[k]):""}" placeholder="0.00">
+          ${monthly ? `<button class="linkbtn s" data-cfbud="${ym}|${k}" title="Set in Monthly cash flow">✎ ${monthName(ym,true)}: ${pm(mo[k])}</button>` : ""}</div>
       </div>`; }).join("")}</div>`}`;
 }
 
@@ -2721,7 +2763,7 @@ function renderFuture(){
 /* ---------- Money Insights ---------- */
 function renderMoney(){
   const ym = S.inMonth, t = monthTotals(ym), p = monthTotals(addMonths(ym,-1));
-  const limits = (S.settings.budget||{}).limits || {};
+  const limits = budgetFor(ym);
   const months = Array.from({length:12}, (_,i)=>addMonths(ym, i-11));
   const mt = months.map(monthTotals);
   const days = ym===thisMonth() ? Number(todayISO().slice(8)) : daysIn(ym);
@@ -2793,7 +2835,7 @@ function pdfKit(title){
 }
 function insightsPdf(){
   const ym = S.inMonth, t = monthTotals(ym), p = monthTotals(addMonths(ym,-1)), cur = PC(), P = c => moneyPlain(c, cur);
-  const limits = (S.settings.budget||{}).limits || {};
+  const limits = budgetFor(ym);
   const k = pdfKit(`Money Insights - ${monthName(ym)}`);
   k.header("Money Insights", `${monthName(ym)} · all amounts in ${cur}`);
   const saved = t.income - t.spent;
@@ -2841,7 +2883,7 @@ async function loadGroupSummaries(){
   S.nestGroups = out; if(S.module==="my-nest") render();
 }
 function renderNest(){
-  const ym = thisMonth(), t = monthTotals(ym), lim = (S.settings.budget||{}).limits || {}, totalBudget = Object.values(lim).reduce((a,v)=>a+(v||0),0);
+  const ym = thisMonth(), t = monthTotals(ym), lim = budgetFor(ym), totalBudget = Object.values(lim).reduce((a,v)=>a+(v||0),0);
   const h = new Date().getHours(), greet = h<12 ? "Good morning" : h<17 ? "Good afternoon" : "Good evening";
   const gSaved = S.goals.reduce((a,g)=>a+(g.saved||0),0), gTarget = S.goals.reduce((a,g)=>a+(g.target||0),0);
   const recent = [...allSpend()].sort((a,b)=>(b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0)).slice(0,5);
@@ -2922,6 +2964,7 @@ function personalClick(t){
     case "goal-add": openModal({type:"goal", name:"", emoji:"🐷", target:"", date:"", saved:""}); return true;
     case "new-group-nest": go("split-share"); openModal({type:"group", name:"", currency:PC(), members:[{id:uid(),name:"Me"}]}); return true;
     case "in-pdf": insightsPdf(); return true;
+    case "cats": openModal({type:"cats"}); return true;
     case "go-cashflow": S.futTab = "cash"; try { localStorage.setItem("cashnest-futtab","cash"); } catch {} go("my-future"); return true;
     case "invite": if(group()) openModal({type:"invite"}); return true;
     case "signout": S.sb && S.sb.auth.signOut().then(()=>location.reload()); return true;
@@ -3202,6 +3245,75 @@ function passesFilters(e){
   return true;
 }
 
+/* ---------- category editor ---------- */
+const CAT_EMOJI = ["🐶","🎓","👶","🕌","💇","🏋️","🎮","🧾","📱","🚗","🏥","🎁","☕","🍼","🧹","🛠️","💼","🌴"];
+const newCatChip = m => `<button type="button" class="newcat-chip ${m.newCat?"on":""}" data-newcat>＋ New</button>`;
+const newCatForm = m => !m.newCat ? "" : `<div class="newcat">
+  <input class="input nc-icon" id="nc-icon" maxlength="4" value="${esc(m.ncIcon||"🏷️")}" aria-label="Emoji">
+  <input class="input" id="nc-name" placeholder="New category name, e.g. Pet" value="${esc(m.ncName||"")}">
+  <button type="button" class="btn sm primary" data-ncadd>Add</button>
+  <div class="nc-emojis">${CAT_EMOJI.map(e=>`<button type="button" data-ncemoji="${e}">${e}</button>`).join("")}</div></div>`;
+function createCategory(icon, label){
+  label = String(label||"").trim(); if(!label) return null;
+  const exist = CATEGORIES.find(c => nrm(c[2])===nrm(label)); if(exist) return exist[0];
+  const st = JSON.parse(JSON.stringify((S.settings||{}).cats || {})), k = "c_" + uid();
+  (st.custom ||= []).push({k, icon:(icon||"").trim()||"🏷️", label});
+  saveSetting("cats", st); applyCats(true);
+  return k;
+}
+function bindNewCat(ov, m, sync){
+  const chip = ov.querySelector("[data-newcat]"); if(!chip) return;
+  chip.onclick = () => { sync(); m.newCat = !m.newCat; renderModal(); setTimeout(()=>document.getElementById("nc-name")?.focus()); };
+  ov.querySelectorAll("[data-ncemoji]").forEach(b => b.onclick = () => { ov.querySelector("#nc-icon").value = b.dataset.ncemoji; });
+  const add = ov.querySelector("[data-ncadd]");
+  if(add){ const go_ = () => { sync(); const k = createCategory(ov.querySelector("#nc-icon").value, ov.querySelector("#nc-name").value);
+      if(!k) return ov.querySelector("#nc-name").focus(); m.category = k; m.newCat = false; m.ncName = ""; toast(`Category “${CAT[k].label}” added`); renderModal(); };
+    add.onclick = go_; ov.querySelector("#nc-name").onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); go_(); } }; }
+}
+function catsModal(m){
+  const st = (S.settings||{}).cats || {}, edit = st.edit || {}, custom = st.custom || [];
+  const used = k => S.spend.some(x=>x.category===k) || Object.values(S.groupExp||{}).some(l=>(l||[]).some(e=>e.category===k));
+  const row = (k, icon, label, isCustom, edited) => `<div class="catrow">
+      <input class="input nc-icon" data-cicon="${k}" maxlength="4" value="${esc(icon)}" aria-label="Emoji">
+      <input class="input" data-clabel="${k}" value="${esc(label)}">
+      ${isCustom ? `<button class="btn sm ghost" data-cdel="${k}" title="Delete category">✕</button>`
+        : edited ? `<button class="btn sm ghost" data-creset="${k}" title="Back to the original name">↺</button>` : `<span style="width:34px"></span>`}
+    </div>`;
+  return `<header><h3>🏷️ Categories</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="s">Rename any category or change its emoji, and add your own. Changes apply everywhere: spending, budgets, cash flow and insights.</div>
+    <div class="field"><label>Your categories</label><div class="catlist">${custom.length ? custom.map(c=>row(c.k, c.icon||"🏷️", c.label, true)).join("") : `<div class="s" style="padding:6px 2px">None yet. Add one below.</div>`}</div></div>
+    <div class="newcat" style="margin-top:0"><input class="input nc-icon" id="cm-icon" maxlength="4" value="🏷️" aria-label="Emoji"><input class="input" id="cm-name" placeholder="New category, e.g. Pet, Kids' school, Zakat"><button class="btn sm primary" data-cmadd>＋ Add</button>
+      <div class="nc-emojis">${CAT_EMOJI.map(e=>`<button type="button" data-cmemoji="${e}">${e}</button>`).join("")}</div></div>
+    <div class="field"><label>Built-in categories</label><div class="catlist">${BASE_CATS.map(([k,i,l]) => row(k, (edit[k]&&edit[k].icon)||i, (edit[k]&&edit[k].label)||l, false, !!edit[k])).join("")}</div></div>
+    <div class="err" id="cm-err"></div>
+  </div>
+  <footer><span class="s">Deleting a category moves nothing. Its items show as “Other” until you recategorise them.</span><div style="display:flex;gap:8px"><button class="btn" data-close>Close</button><button class="btn primary" data-cmsave>Save changes</button></div></footer>`;
+}
+function bindCats(ov){
+  const $ = s => ov.querySelector(s);
+  const collect = () => {
+    const st = JSON.parse(JSON.stringify((S.settings||{}).cats || {})); st.edit = st.edit || {}; st.custom = st.custom || [];
+    ov.querySelectorAll("[data-clabel]").forEach(inp => { const k = inp.dataset.clabel, label = inp.value.trim(), icon = ov.querySelector(`[data-cicon="${k}"]`).value.trim();
+      const cu = st.custom.find(c=>c.k===k);
+      if(cu){ if(label) cu.label = label; cu.icon = icon || cu.icon; return; }
+      const base = BASE_CATS.find(c=>c[0]===k);
+      if(label && (label!==base[2] || icon!==base[1])) st.edit[k] = {label, icon: icon || base[1]}; else delete st.edit[k]; });
+    return st;
+  };
+  ov.querySelectorAll("[data-cmemoji]").forEach(b => b.onclick = () => { $("#cm-icon").value = b.dataset.cmemoji; });
+  const addNew = () => { const name = $("#cm-name").value.trim(); if(!name) return $("#cm-name").focus();
+    if(CATEGORIES.some(c => nrm(c[2])===nrm(name))) return $("#cm-err").textContent = "There's already a category with that name.";
+    const st = collect(); st.custom.push({k:"c_"+uid(), icon:$("#cm-icon").value.trim()||"🏷️", label:name}); saveSetting("cats", st); applyCats(true); toast(`Category “${name}” added`); setTimeout(renderModal, 20); };
+  $("[data-cmadd]").onclick = addNew; $("#cm-name").onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); addNew(); } };
+  ov.querySelectorAll("[data-creset]").forEach(b => b.onclick = () => { const st = collect(); delete st.edit[b.dataset.creset]; saveSetting("cats", st); applyCats(true); setTimeout(renderModal, 20); });
+  ov.querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => {
+    if(b.dataset.armed!=="1"){ b.dataset.armed = "1"; b.textContent = "Delete?"; return; }
+    const st = collect(); st.custom = st.custom.filter(c => c.k !== b.dataset.cdel); saveSetting("cats", st); applyCats(true); toast("Category deleted"); setTimeout(renderModal, 20); });
+  $("[data-cmsave]").onclick = () => { const st = collect(); saveSetting("cats", st); applyCats(true); toast("Categories saved"); closeModal(); };
+}
+EXTRA_MODALS.cats = [catsModal, bindCats];
+
 /* banks you've used anywhere, for suggestions */
 function allBanks(){
   const s = new Set();
@@ -3309,7 +3421,7 @@ function bindBulkCat(ov, m){
     const target = (!isG && !exp.length && inc.length) ? inc : exp;
     ov.querySelectorAll("[data-bcat]").forEach(x => x.disabled = true); b.textContent = "Saving…";
     const label = ((CAT[cat]||INC[cat])||{}).label || cat;
-    const run = async () => { for(const x of target){ const item = {...x, category:cat};
+    const run = async () => { for(const x of target){ const {catLabel, catIcon, ...xx} = x; const item = {...xx, category:cat, ...(isG ? catTag(cat) : {})};
       if(isG) await S.store.saveExpense(group().id, item); else await S.pStore.save("spending", item); } };
     const ok = isG ? await write(run, `${target.length} set to ${label}`) : await writeP(run, `${target.length} set to ${label}`);
     if(ok){ (isG ? S.sel : S.spSel).ids.clear(); closeModal(); render(); } else ov.querySelectorAll("[data-bcat]").forEach(x => x.disabled = false);
@@ -3785,14 +3897,17 @@ function cashFlow(){
     bank(key).items.push({label: l.card ? `💳 ${l.purpose||"Easy Cash"} · ${l.name}` : `🏦 ${l.purpose||"Loan"}${l.bank && l.bank!==l.name ? ` · ${l.name}` : ""}`, vals});
   });
   // planned spending from My Budget: full limits in future months, what's left of each limit this month
-  const BL = (S.settings.budget||{}).limits || {}, budRows = [];
+  const budRows = [];
   if(C.useBudget){
-    const spentNow = monthTotals(cm).byCat;
-    Object.entries(BL).filter(([k,v]) => v > 0 && k !== "loans").forEach(([k,v]) => {
-      const vals = months.map(m => m > cm ? v : m===cm ? Math.max(0, v - (spentNow[k]||0)) : 0);
-      if(vals.some(x=>x)) budRows.push({label:`${(CAT[k]||CAT.other).icon} ${(CAT[k]||CAT.other).label}`, vals, cat:k});
+    const spentNow = monthTotals(cm).byCat, OV = budOv();
+    const cats = new Set(Object.entries((S.settings.budget||{}).limits||{}).filter(([k,v])=>v>0).map(([k])=>k));
+    months.forEach(m => Object.keys(OV[m]||{}).forEach(k => cats.add(k)));
+    CATEGORIES.map(c=>c[0]).filter(k => cats.has(k) && k !== "loans").forEach(k => {
+      const vals = months.map(m => { const v = budgetFor(m)[k] || 0; return m > cm ? v : m===cm ? Math.max(0, v - (spentNow[k]||0)) : 0; });
+      const edited = months.map(m => m >= cm && OV[m] && OV[m][k] != null);
+      budRows.push({label:`${(CAT[k]||CAT.other).icon} ${(CAT[k]||CAT.other).label}`, vals, cat:k, edited});
     });
-    if(budRows.length){ const b = bank("\u0001budget"); b.budget = true; budRows.forEach(r => b.items.push({label:r.label, vals:r.vals})); }
+    if(budRows.some(r => r.vals.some(v=>v) || r.edited.some(Boolean))){ const b = bank("\u0001budget"); b.budget = true; budRows.forEach(r => b.items.push({label:r.label, vals:r.vals, cat:r.cat, edited:r.edited})); }
   }
   const list = [...banks.values()].map(b => {
     const sub = months.map((m,i) => b.spend[i] + b.group[i] + b.shared[i] + b.items.reduce((a,it)=>a+it.vals[i],0));
@@ -3817,14 +3932,17 @@ function renderCashFlow(){
   body += sec("Payables by bank");
   F.banks.forEach(b => {
     const nm = b.budget ? "Budgeted spending" : b.name===OTHER ? "No bank / cash" : b.name;
-    body += `<tr class="cf-bank${b.budget?" cf-budget":""}"><td class="stick">${b.budget?"🎯":b.name===OTHER?"👛":"🏦"} ${esc(nm)}${b.budget?` <span class="s">(from My Budget · this month: what's left)</span>`:""}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+    body += `<tr class="cf-bank${b.budget?" cf-budget":""}"><td class="stick">${b.budget?"🎯":b.name===OTHER?"👛":"🏦"} ${esc(nm)}${b.budget?` <span class="s">(from My Budget · this month: what's left · click to edit)</span> <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button>`:""}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
     if(b.spend.some(v=>v)) body += `<tr><td class="stick sub">${b.name===OTHER ? "Spending" : "Card / account spending"}</td>${b.spend.map(v=>cell(v)).join("")}</tr>`;
     if(b.group.some(v=>v)) body += `<tr><td class="stick sub">🤝 Group expenses you paid</td>${b.group.map(v=>cell(v)).join("")}</tr>`;
     if(b.shared.some(v=>v)) body += `<tr><td class="stick sub">🤝 Your share of group expenses</td>${b.shared.map(v=>cell(v)).join("")}</tr>`;
-    b.items.forEach(it => body += `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map(v=>cell(v)).join("")}</tr>`);
+    b.items.forEach(it => body += it.cat
+      ? `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map((v,i) => months[i] < cm ? cell(0) : `<td><button class="cf-inc" data-cfbud="${months[i]}|${it.cat}" title="Edit ${esc(it.label.replace(/^\S+\s/,""))} budget for ${monthName(months[i])}">${v ? pm(v) : `<span class="muted">—</span>`}${it.edited[i] ? `<span class="est-tag ed">✎</span>` : ""}</button></td>`).join("")}</tr>`
+      : `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map(v=>cell(v)).join("")}</tr>`);
     body += `<tr class="cf-subtotal"><td class="stick">Subtotal · ${esc(nm)}</td>${b.sub.map(v=>cell(v)).join("")}</tr>`;
   });
   if(!F.banks.length) body += `<tr><td class="stick sub muted">Nothing to pay in this period</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+  if(C.useBudget && !F.banks.some(b=>b.budget)) body += `<tr class="cf-bank cf-budget"><td class="stick">🎯 Budgeted spending <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button></td>${months.map(()=>`<td></td>`).join("")}</tr>`;
   body += `<tr class="cf-total"><td class="stick">Total due</td>${F.due.map((v,i)=>`<td class="${v > F.incomeTotal[i] ? "overspend" : ""}">${v ? pm(v) : "—"}</td>`).join("")}</tr>`;
   body += `<tr class="cf-total"><td class="stick">Left over (income − due)</td>${F.left.map(v=>`<td class="${v<0?"overspend":"pos"}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
   body += `<tr class="cf-run"><td class="stick">Running balance${C.opening?` <span class="s">(from ${pm(C.opening)})</span>`:""}</td>${F.running.map(v=>`<td class="${v<0?"overspend":""}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
@@ -3901,8 +4019,59 @@ function bindCfIncome(ov, m){
   setTimeout(() => { const i = $("#ci-amt"); i.focus(); i.select(); });
 }
 EXTRA_MODALS.cfinc = [cfIncomeModal, bindCfIncome];
+function cfBudModal(m){
+  const C = cfSettings(), cm = thisMonth(), def = ((S.settings.budget||{}).limits||{})[m.cat] || 0;
+  const cur = m.cat ? (budOv()[m.ym]||{})[m.cat] : null, spent = m.ym===cm && m.cat ? (monthTotals(cm).byCat[m.cat]||0) : 0;
+  const monthsOpt = []; for(let x = (C.from > cm ? C.from : cm); x <= C.to; x = addMonths(x,1)) monthsOpt.push(x);
+  const cats = CATEGORIES.filter(c => c[0] !== "loans");
+  return `<header><h3>${m.add ? "Add to budgeted spending" : `${(CAT[m.cat]||CAT.other).icon} ${(CAT[m.cat]||CAT.other).label} · ${monthName(m.ym)}`}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    ${m.add ? `<div class="row2">
+      <div class="field"><label>Category</label><select class="input" id="cb-cat">${cats.map(([k,i,l])=>`<option value="${k}" ${m.cat===k?"selected":""}>${i} ${l}</option>`).join("")}</select></div>
+      <div class="field"><label>Month</label><select class="input" id="cb-month">${monthsOpt.map(x=>`<option value="${x}" ${x===m.ym?"selected":""}>${monthName(x)}</option>`).join("")}</select></div></div>` : ""}
+    <div class="field"><label>Budget for the whole month (${esc(PC())})</label><input class="input amount-in" id="cb-amt" inputmode="decimal" value="${cur!=null ? fromCents(cur) : def ? fromCents(def) : ""}" placeholder="0.00"><div class="calc" id="cb-calc"></div></div>
+    ${spent ? `<div class="s">Already spent this month: <b>${pm(spent)}</b>. Only what's left of the budget is counted in the cash flow.</div>` : ""}
+    <div class="seg" style="flex-direction:column;gap:3px">
+      <button type="button" data-cbscope="one" class="${m.scope==="one"?"on":""}" style="text-align:left;padding:8px 10px">Only this month</button>
+      <button type="button" data-cbscope="after" class="${m.scope==="after"?"on":""}" style="text-align:left;padding:8px 10px">This month and every later month in this period</button>
+      <button type="button" data-cbscope="all" class="${m.scope==="all"?"on":""}" style="text-align:left;padding:8px 10px">Every month: change my usual limit in My Budget</button>
+    </div>
+    <div class="s">Usual limit in My Budget: ${def ? pm(def) : "not set"}.</div>
+    <div class="err" id="cb-err"></div>
+  </div>
+  <footer>${cur!=null && !m.add ? `<button class="btn danger ghost" data-cbreset>Reset this month</button>` : "<span></span>"}
+    <div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-cbsave>Save</button></div></footer>`;
+}
+function bindCfBud(ov, m){
+  const $ = s => ov.querySelector(s);
+  $("#cb-amt").oninput = () => { $("#cb-calc").innerHTML = calcPreview($("#cb-amt").value, {currency:PC()}); };
+  ov.querySelectorAll("[data-cbscope]").forEach(b => b.onclick = () => { m.scope = b.dataset.cbscope; ov.querySelectorAll("[data-cbscope]").forEach(x=>x.classList.toggle("on", x===b)); });
+  if($("#cb-cat")) $("#cb-cat").onchange = e => { m.cat = e.target.value; m.ym = $("#cb-month").value; renderModal(); };
+  if($("#cb-month")) $("#cb-month").onchange = e => { m.ym = e.target.value; };
+  $("[data-cbsave]").onclick = async () => {
+    if($("#cb-cat")){ m.cat = $("#cb-cat").value; m.ym = $("#cb-month").value; }
+    const a = toCents($("#cb-amt").value);
+    if(!isFinite(a) || a < 0) return $("#cb-err").textContent = "Enter an amount (0 or more).";
+    const C = cfSettings(), OV = JSON.parse(JSON.stringify(budOv())), label = (CAT[m.cat]||CAT.other).label;
+    if(m.scope==="all"){
+      for(let x = m.ym; x <= addMonths(C.to, 24); x = addMonths(x,1)) if(OV[x]) { delete OV[x][m.cat]; if(!Object.keys(OV[x]).length) delete OV[x]; }
+      const next = JSON.parse(JSON.stringify(S.settings||{}));
+      setPath(next, `budget.limits.${m.cat}`, a); setPath(next, "cf.budgetByMonth", OV);
+      S.settings = next; setTimeout(render); await writeP(() => S.pStore.saveSettings(S.settings));
+      toast(`${label}: usual limit set to ${pm(a)}`); closeModal(); return;
+    }
+    const list = []; if(m.scope==="after"){ for(let x = m.ym; x <= C.to; x = addMonths(x,1)) list.push(x); } else list.push(m.ym);
+    list.forEach(x => { (OV[x] ||= {})[m.cat] = a; });
+    saveSetting("cf.budgetByMonth", OV); toast(list.length>1 ? `${label}: ${pm(a)} for ${list.length} months` : `${label}: ${pm(a)} for ${monthName(m.ym)}`); closeModal();
+  };
+  const r = $("[data-cbreset]"); if(r) r.onclick = () => { const OV = JSON.parse(JSON.stringify(budOv())); if(OV[m.ym]){ delete OV[m.ym][m.cat]; if(!Object.keys(OV[m.ym]).length) delete OV[m.ym]; } saveSetting("cf.budgetByMonth", OV); toast("Back to the usual limit"); closeModal(); };
+  setTimeout(() => { const i = $("#cb-amt"); i.focus(); i.select(); });
+}
+EXTRA_MODALS.cfbud = [cfBudModal, bindCfBud];
 function cfClick(t){
   if(t.dataset.cfinc){ openModal({type:"cfinc", ym:t.dataset.cfinc, scope:"one"}); return true; }
+  if(t.dataset.cfbud){ const [ym, cat] = t.dataset.cfbud.split("|"); openModal({type:"cfbud", ym, cat, scope:"one"}); return true; }
+  if(t.dataset.cfbudadd){ const C = cfSettings(), cm = thisMonth(); openModal({type:"cfbud", add:true, ym: C.from > cm ? C.from : (C.to < cm ? C.to : addMonths(cm,1) <= C.to ? addMonths(cm,1) : cm), cat:"travel", scope:"one"}); return true; }
   if(t.dataset.futtab){ S.futTab = t.dataset.futtab; try { localStorage.setItem("cashnest-futtab", S.futTab); } catch {} render(); return true; }
   if(t.dataset.cfp){ const cm = thisMonth(), y = cm.slice(0,4);
     const r = {p36:[addMonths(cm,-3), addMonths(cm,6)], n12:[cm, addMonths(cm,11)], yr:[`${y}-01`, `${y}-12`], l6:[addMonths(cm,-5), cm]}[t.dataset.cfp];
