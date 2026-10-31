@@ -378,6 +378,30 @@ body.wide table.wide-table td.desc{max-width:240px}
 .ccnums>div{display:flex;flex-direction:column;align-items:flex-end}
 .ccnums b{font-family:"Bricolage Grotesque";font-size:18px}
 .loan.ccplan .gemoji{background:#e8eefc}
+
+.cf-controls{padding:12px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px;box-shadow:none}
+.cf-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.cf-presets{display:flex;gap:6px;flex-wrap:wrap}
+.cf-summary{font-size:14px;margin:0 2px 10px}
+.overspend{color:var(--neg) !important;font-weight:800 !important}
+table.cf-table{min-width:0;font-size:13px}
+table.cf-table th,table.cf-table td{padding:7px 10px;white-space:nowrap}
+table.cf-table th{text-align:right;font-size:11px}
+table.cf-table th span{font-size:10px;letter-spacing:.04em;opacity:.8}
+table.cf-table th.curm{color:var(--accent)}
+table.cf-table .stick{position:sticky;left:0;z-index:2;background:var(--panel);text-align:left;min-width:220px;max-width:300px;white-space:normal;box-shadow:inset -1px 0 0 var(--line)}
+table.cf-table thead .stick{z-index:4;background:var(--panel2)}
+table.cf-table td.sub{padding-left:22px;color:var(--muted)}
+table.cf-table tr.cf-sec td{background:var(--panel2);font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:700;padding-top:12px}
+table.cf-table tr.cf-sec td.stick{background:var(--panel2)}
+table.cf-table tr.cf-bank td{font-weight:700;border-bottom:0;padding-top:12px}
+table.cf-table tr.cf-subtotal td{font-weight:700;background:color-mix(in srgb,var(--panel2) 60%,var(--panel))}
+table.cf-table tr.cf-subtotal td.stick{background:color-mix(in srgb,var(--panel2) 60%,var(--panel))}
+table.cf-table tr.cf-total td{font-weight:700;border-top:2px solid var(--line)}
+table.cf-table tr.cf-run td{font-weight:800;font-size:14px;background:var(--accent-soft)}
+table.cf-table tr.cf-run td.stick{background:var(--accent-soft)}
+table.cf-table td.est{color:var(--muted);font-style:italic}
+.est-tag{font-size:9.5px;margin-left:4px;padding:1px 4px;border-radius:4px;background:var(--panel2);font-style:normal;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -1012,7 +1036,8 @@ function expenseModal(m){
       ${m.splitType==="exact" ? `<div class="hint">Tip: you can type a sum, e.g. <b>(800-50)/3+50</b></div>` : ""}
       <div class="split-status" id="e-status">${splitStatus(comp, total, g, m)}</div>
     </div>
-    <div class="field"><label>Notes (optional)</label><input class="input" id="e-notes" value="${esc(m.notes)}" placeholder="Anything to remember"></div>
+    <div class="row2"><div class="field"><label>Notes (optional)</label><input class="input" id="e-notes" value="${esc(m.notes)}" placeholder="Anything to remember"></div>
+      <div class="field"><label>Paid with bank / card (optional)</label><input class="input" id="e-bank" list="bank-list" value="${esc(m.bank||"")}" placeholder="e.g. Mashreq">${bankDatalist()}</div></div>
     <div class="err" id="e-err"></div>
   </div>
   <footer>
@@ -1144,7 +1169,7 @@ function bindModal(ov){
   if(m.type==="expense"){
     const syncTop = () => {
       m.desc=$("#e-desc").value; m.amount=$("#e-amt").value; m.date=$("#e-date").value;
-      m.paidBy=$("#e-paid").value; m.notes=$("#e-notes").value;
+      m.paidBy=$("#e-paid").value; m.notes=$("#e-notes").value; m.bank=$("#e-bank").value;
     };
     const refreshSplit = () => {
       const comp = computeSplit(m, g);
@@ -1190,7 +1215,7 @@ function bindModal(ov){
       const baseSplits = base===total ? comp.splits : allocate(base, comp.splits);
       const ok = await write(() => S.store.saveExpense(g.id, {
         id, kind:"expense", desc:m.desc.trim(), amount:base, date:m.date||todayISO(), category:m.category,
-        paidBy:m.paidBy, splitType:m.splitType, inputs, splits:baseSplits, notes:(m.notes||"").trim(),
+        paidBy:m.paidBy, splitType:m.splitType, inputs, splits:baseSplits, notes:(m.notes||"").trim(), ...((m.bank||"").trim() ? {bank:m.bank.trim()} : {}),
         createdAt: m.createdAt || Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id)), ...origTag(m, g.currency, total)
       }), m.id?"Expense updated":"Expense added");
       if(ok) closeModal();
@@ -1232,14 +1257,14 @@ function editExpenseModal(e){
   let inputs = {...(e.inputs||{})};
   if(isUnsplit(e)){
     inputs = {}; g.members.forEach(p=>inputs[p.id]=true);
-    return openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other",
+    return openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other", bank:e.bank||"",
       paidBy:e.paidBy, splitType:"equal", inputs, notes:e.notes||"", createdAt:e.createdAt, wasUnsplit:true, ...oc});
   }
   if(!Object.keys(inputs).length){ // rebuild from splits if needed
     if(e.splitType==="equal") Object.keys(e.splits||{}).forEach(k=>inputs[k]=true);
     else { const sp = e.origAmount ? allocate(e.origAmount, e.splits||{}) : (e.splits||{}); Object.entries(sp).forEach(([k,c])=>inputs[k]=fromCents(c)); }
   }
-  openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other",
+  openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other", bank:e.bank||"",
     paidBy:e.paidBy, splitType:e.splitType||"exact", inputs, notes:e.notes||"", createdAt:e.createdAt, ...oc});
 }
 
@@ -1415,10 +1440,10 @@ function buildWorkbook(g){
   const exps = S.expenses.filter(e=>e.kind!=="settle").sort((a,b)=>(a.date||"").localeCompare(b.date||"") || (a.createdAt||0)-(b.createdAt||0));
   const pays = S.expenses.filter(e=>e.kind==="settle").sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   const splitLabel = {equal:"Equal", exact:"Exact", percent:"Percent", shares:"Shares"};
-  const head = ["Date","Description","Category","Paid by","Amount","Split","Notes", ...g.members.map(m=>m.name), "ID"];
+  const head = ["Date","Description","Category","Paid by","Amount","Split","Notes", ...g.members.map(m=>m.name), "ID", "Bank"];
   const rows = [head.map(H)];
   exps.forEach(e => rows.push([D(e.date), e.desc, (CAT[e.category]||CAT.other).label, memberName(g,e.paidBy), M(e.amount),
-    isUnsplit(e) ? "Not split" : splitLabel[e.splitType]||"Exact", e.notes||"", ...g.members.map(m => M((e.splits||{})[m.id]||0)), e.id]));
+    isUnsplit(e) ? "Not split" : splitLabel[e.splitType]||"Exact", e.notes||"", ...g.members.map(m => M((e.splits||{})[m.id]||0)), e.id, e.bank||""]));
   if(exps.length){
     const last = exps.length + 1, sum = col => ({f:`SUM(${col}2:${col}${last})`, s:4});
     const totals = [ "", {v:"TOTAL", s:5}, "", "", {...sum("E"), v:exps.reduce((a,e)=>a+e.amount,0)/100}, "", "" ];
@@ -1555,7 +1580,7 @@ function planImport(sheets, g, opts = {}){
   hdr.forEach((h,j) => {
     const raw = nrm(h), k = hkey(h); if(!raw) return;
     if(known.has(raw)){ memberCols.push([j, String(h).trim()]); return; }
-    const key = ["date","desc","cat","paid","amount","split","notes","id"].find(f => HEAD[f].includes(k) && col[f]==null);
+    const key = ["date","desc","cat","paid","amount","split","bank","notes","id"].find(f => HEAD[f].includes(k) && col[f]==null);
     if(key){ col[key] = j; return; }
     if(HEAD.desc.includes(k) || HEAD.notes.includes(k)){ extraText.push(j); return; }
     // An unknown column counts as a person only if it holds numbers (their shares)
@@ -1597,6 +1622,7 @@ function planImport(sheets, g, opts = {}){
       category: col.cat!=null ? catKey(r[col.cat]) : "other", paidBy: paidName ? member(paidName).id : opts.defaultPayer,
       notes: [col.notes, ...extraText].filter(j=>j!=null).map(j=>String(r[j] ?? "").trim()).filter(Boolean).join(" · "),
       splitHint: col.split!=null ? nrm(r[col.split]) : "",
+      bank: col.bank!=null ? String(r[col.bank] ?? "").trim() : "",
       shares: shares.map(([n,c]) => [member(n).id, c])});
     if(prev) plan.updates++;
   }
@@ -1607,7 +1633,7 @@ function planImport(sheets, g, opts = {}){
     if(!p.shares.length && (opts.unsplit!=="equal" || p.splitHint.startsWith("not"))){
       plan.unsplit++;
       plan.expenses.push({id:p.id, kind:"expense", desc:p.desc, amount:p.amount, date:p.date, category:p.category, paidBy:p.paidBy,
-        splitType:"equal", inputs:{}, splits:{}, needsSplit:true, notes:p.notes, createdAt:p.createdAt});
+        splitType:"equal", inputs:{}, splits:{}, needsSplit:true, notes:p.notes, createdAt:p.createdAt, ...(p.bank?{bank:p.bank}:{})});
       continue;
     }
     if(!p.shares.length){
@@ -1619,7 +1645,7 @@ function planImport(sheets, g, opts = {}){
       else { splitType="exact"; p.shares.forEach(([id,c])=>inputs[id]=fromCents(c)); }
     }
     plan.expenses.push({id:p.id, kind:"expense", desc:p.desc, amount:p.amount, date:p.date, category:p.category, paidBy:p.paidBy,
-      splitType, inputs, splits, notes:p.notes, createdAt:p.createdAt});
+      splitType, inputs, splits, notes:p.notes, createdAt:p.createdAt, ...(p.bank?{bank:p.bank}:{})});
   }
   const paySheet = sheets.find(s=>nrm(s.name)==="payments");
   if(paySheet){
@@ -2045,7 +2071,8 @@ const METHODS = ["Cash","Card","Bank","Other"];
 const FULLM = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const GOAL_EMOJI = ["🐷","🏖️","🏠","🚗","🎓","💍","🛡️","✈️","💻","🎁","👶","🕋"];
 HEAD.type = ["type","kind","transaction type","dr cr","debit credit"];
-HEAD.method = ["method","payment","payment method","paid with","account","mode","payment mode"];
+HEAD.method = ["method","payment","payment method","paid with","mode","payment mode"];
+HEAD.bank = ["bank","bank name","card","credit card","card name","account","issuer","bank card","card used"];
 HEAD.credit = ["credit","credit amount","deposit","deposits","income","money in","paid in"];
 
 const PC = () => S.settings.currency || "AED";
@@ -2073,7 +2100,7 @@ function sharedItems(){
       const c = (e.splits||{})[me.id] || 0; if(c <= 0) continue;
       const key = `${g.id}__${e.id}`; if(hid[key]) continue;
       out.push({id:"sh:"+key, key, shared:true, gid:g.id, eid:e.id, gname:g.name, type:"expense", date:e.date, desc:e.desc,
-        amount:toBase(c, g.currency, PC()), share:c, total:e.amount, gcur:g.currency, category:e.category||"other",
+        amount:toBase(c, g.currency, PC()), share:c, total:e.amount, gcur:g.currency, category:e.category||"other", payerMe:e.paidBy===me.id, bankPaid:!!(e.bank||"").trim(),
         method:"Shared", notes:"", payer:memberName(g, e.paidBy), createdAt:e.createdAt||0});
     }
   }
@@ -2314,7 +2341,7 @@ function spRow(x){
   }
   const selMode = S.spSel.on && S.module==="daily-spending", picked = selMode && S.spSel.ids.has(x.id);
   return `<button class="prow${picked?" picked":""}" data-sp="${esc(x.id)}">${selMode ? `<div class="cat">${selBox(picked)}</div>` : `<div class="cat">${c.icon}</div>`}
-    <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}${enteredAs(x)}</div></div>
+    <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.bank?` · 🏦 ${esc(x.bank)}`:x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}${enteredAs(x)}</div></div>
     <div class="amt ${inc?"pos":""}">${inc?"+ ":""}${pm(x.amount)}</div></button>`;
 }
 function spendModal(m){
@@ -2329,6 +2356,7 @@ function spendModal(m){
     <div class="field"><label>Description</label><input class="input" id="p-desc" value="${esc(m.desc)}" placeholder="${m.kind==="income"?"e.g. October salary":"e.g. Lunch, Careem, Carrefour"}"></div>
     <div class="field"><label>Category</label><div class="cat-pick">${cats.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-pcat="${k}">${i} ${l}</button>`).join("")}</div></div>
     <div class="field"><label>${m.kind==="income"?"Received by":"Paid with"}</label><div class="seg">${METHODS.map(x=>`<button type="button" data-method="${x}" class="${m.method===x?"on":""}">${x}</button>`).join("")}</div></div>
+    <div class="field"><label>Bank / card (optional)</label><input class="input" id="p-bank" list="bank-list" value="${esc(m.bank||"")}" placeholder="e.g. Mashreq, ADCB, Emirates NBD">${bankDatalist()}</div>
     <div class="field"><label>Notes (optional)</label><input class="input" id="p-notes" value="${esc(m.notes)}"></div>
     <div class="err" id="p-err"></div>
   </div>
@@ -2337,7 +2365,7 @@ function spendModal(m){
 }
 function bindSpend(ov, m){
   const $ = s => ov.querySelector(s);
-  const sync = () => { m.amount=$("#p-amt").value; m.date=$("#p-date").value; m.desc=$("#p-desc").value; m.notes=$("#p-notes").value; };
+  const sync = () => { m.amount=$("#p-amt").value; m.date=$("#p-date").value; m.desc=$("#p-desc").value; m.notes=$("#p-notes").value; m.bank=$("#p-bank").value; };
   $("#p-amt").oninput = () => { $("#p-calc").innerHTML = calcPreview($("#p-amt").value, {currency:entryCur(m,PC())}); $("#p-conv").textContent = convNote(m, PC(), $("#p-amt").value); };
   ov.querySelectorAll("[data-pcur]").forEach(b => b.onclick = () => { sync(); m.cur = b.dataset.pcur; renderModal(); });
   ov.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { sync(); if(m.kind===b.dataset.kind) return; m.kind = b.dataset.kind; m.category = m.kind==="income" ? "salary" : "food"; renderModal(); });
@@ -2347,7 +2375,7 @@ function bindSpend(ov, m){
     sync(); const amt = toCents(m.amount);
     if(!isFinite(amt) || amt<=0) return $("#p-err").textContent = "Enter an amount above zero.";
     const item = {id:m.id||uid(), type:m.kind==="income"?"income":"expense", date:m.date||todayISO(), desc:m.desc.trim(), amount:toBase(amt, entryCur(m,PC()), PC()), ...origTag(m, PC(), amt),
-      category:m.category, method:m.method||"", notes:(m.notes||"").trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.spend.find(z=>z.id===m.id))};
+      category:m.category, method:m.method||"", notes:(m.notes||"").trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.spend.find(z=>z.id===m.id)), ...((m.bank||"").trim() ? {bank:m.bank.trim()} : {}), ...(S.spend.find(z=>z.id===m.id)?.loanId ? {loanId:S.spend.find(z=>z.id===m.id).loanId} : {})};
     if(await writeP(() => S.pStore.save("spending", item), m.id ? "Saved" : (item.type==="income" ? "Income added" : "Spending added"))){
       closeModal(); if(monthOf(item.date)!==S.spMonth && S.module==="daily-spending"){ S.spMonth = monthOf(item.date); render(); } }
   };
@@ -2356,7 +2384,7 @@ function bindSpend(ov, m){
   if(!m.id) setTimeout(()=>$("#p-amt")?.focus());
 }
 const newSpend = (kind="expense") => openModal({type:"spend", kind, amount:"", date: S.module==="daily-spending" && S.spMonth!==thisMonth() ? `${S.spMonth}-01` : todayISO(), desc:"", category: kind==="income"?"salary":"food", method:"Card", notes:""});
-const editSpend = x => openModal({type:"spend", id:x.id, kind:x.type==="income"?"income":"expense", ...(x.origCurrency&&x.origAmount ? {cur:x.origCurrency, amount:fromCents(x.origAmount)} : {cur:PC(), amount:fromCents(x.amount)}), date:x.date, desc:x.desc||"", category:x.category, method:x.method||"", notes:x.notes||"", createdAt:x.createdAt});
+const editSpend = x => openModal({type:"spend", id:x.id, kind:x.type==="income"?"income":"expense", ...(x.origCurrency&&x.origAmount ? {cur:x.origCurrency, amount:fromCents(x.origAmount)} : {cur:PC(), amount:fromCents(x.amount)}), date:x.date, desc:x.desc||"", category:x.category, method:x.method||"", notes:x.notes||"", bank:x.bank||"", createdAt:x.createdAt});
 
 /* import / export for Daily Spending */
 function planSpendImport(sheets){
@@ -2368,7 +2396,7 @@ function planSpendImport(sheets){
     if(!hdr){ plan.problems.push("Couldn't find the Description and Amount columns. Add a header row with “Date”, “Description” and “Amount”."); return plan; } }
   const col = {}, extra = [];
   hdr.forEach((h,j) => { const k = hkey(h); if(!k) return;
-    const key = ["date","desc","cat","amount","credit","type","method","notes"].find(f => HEAD[f].includes(k) && col[f]==null);
+    const key = ["date","desc","cat","amount","credit","type","bank","method","notes"].find(f => HEAD[f].includes(k) && col[f]==null);
     if(key) col[key] = j; else if(HEAD.desc.includes(k) || HEAD.notes.includes(k)) extra.push(j); });
   if(col.notes==null && extra.length) col.notes = extra.shift();
   const rows = sh.rows.slice(hi+1).map((r,i)=>({r:r||[], n:hi+2+i})).filter(o => o.r.some(c=>c!==""&&c!=null));
@@ -2395,7 +2423,8 @@ function planSpendImport(sheets){
     const key = `${date}|${amt}|${desc.toLowerCase()}`;
     if(seen.has(key)){ plan.dupes++; continue; } seen.add(key);
     if(type==="income") plan.incomes++;
-    plan.items.push({id:uid(), type, date, desc, amount:amt, category, method,
+    const bank = col.bank!=null ? String(r[col.bank] ?? "").trim() : "";
+    plan.items.push({id:uid(), type, date, desc, amount:amt, category, method: method || (bank ? "Card" : ""), ...(bank ? {bank} : {}),
       notes:[col.notes, ...extra].filter(j=>j!=null).map(j=>String(r[j]??"").trim()).filter(Boolean).join(" · "), createdAt:Date.now()+n});
   }
   return plan;
@@ -2420,9 +2449,9 @@ function spImportModal(m){
       ${p.incomes?`<div class="dl"><span>Income</span><b>${p.incomes}</b></div>`:""}
       ${p.dupes?`<div class="dl"><span>Already in CashNest (skipped)</span><b>${p.dupes}</b></div>`:""}
     </div>
-    <div class="card tbl-wrap" style="box-shadow:none"><table class="bk tpl"><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead>
-      <tbody>${p.items.slice(0,6).map(x=>`<tr><td class="muted">${fmtDay(x.date)}</td><td>${esc(x.desc)}</td><td class="muted">${catOf(x).icon} ${esc(catOf(x).label)}</td><td style="text-align:right" class="${x.type==="income"?"pos":""}">${x.type==="income"?"+ ":""}${pm(x.amount)}</td></tr>`).join("")}
-      ${total>6?`<tr><td colspan="4" class="muted">…and ${total-6} more</td></tr>`:""}</tbody></table></div>
+    <div class="card tbl-wrap" style="box-shadow:none"><table class="bk tpl"><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Bank</th><th>Amount</th></tr></thead>
+      <tbody>${p.items.slice(0,6).map(x=>`<tr><td class="muted">${fmtDay(x.date)}</td><td>${esc(x.desc)}</td><td class="muted">${catOf(x).icon} ${esc(catOf(x).label)}</td><td class="muted">${esc(x.bank||"")}</td><td style="text-align:right" class="${x.type==="income"?"pos":""}">${x.type==="income"?"+ ":""}${pm(x.amount)}</td></tr>`).join("")}
+      ${total>6?`<tr><td colspan="5" class="muted">…and ${total-6} more</td></tr>`:""}</tbody></table></div>
     <div style="font-size:12px;color:var(--muted)">Categories are guessed from the description when the file has none. You can change any of them after importing.</div>` : ""}
     ${p.problems.length ? `<div class="probs"><b class="neg">${p.problems.length} row${p.problems.length>1?"s":""} skipped</b><ul>${p.problems.slice(0,40).map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
   </div>
@@ -2447,19 +2476,19 @@ function chooseSheets(onSheets){
 }
 function spTemplate(){
   const H = v => ({v, s:3});
-  return saveFile("CashNest spending template.xlsx", XL.write([{name:"Spending", widths:[12,30,16,12,10,24], rows:[
-    ["Date","Description","Category","Amount","Method","Notes"].map(H),
-    [{v:isoToSerial(todayISO()),s:1},"Lunch","Food & drink",{v:42,s:2},"Card",""],
-    [{v:isoToSerial(todayISO()),s:1},"Careem","Transport",{v:28.5,s:2},"Card",""]]},
-    {name:"Instructions", widths:[18,100], rows:[["Column","What to put"].map(H),["Date","Date of the expense. Empty = today."],["Description","What it was for."],["Amount","Required. For income, add a Type column with “Income”, or use a separate Credit column."],["Category",CATEGORIES.map(c=>c[2]).join(", ")+" (optional, guessed from the description if empty)"],["Method","Cash, Card, Bank or Other (optional)"]]}]), "Excel");
+  return saveFile("CashNest spending template.xlsx", XL.write([{name:"Spending", widths:[12,30,16,12,16,10,24], rows:[
+    ["Date","Description","Category","Amount","Bank","Method","Notes"].map(H),
+    [{v:isoToSerial(todayISO()),s:1},"Lunch","Food & drink",{v:42,s:2},"Mashreq","Card",""],
+    [{v:isoToSerial(todayISO()),s:1},"Careem","Transport",{v:28.5,s:2},"ADCB","Card",""]]},
+    {name:"Instructions", widths:[18,100], rows:[["Column","What to put"].map(H),["Date","Date of the expense. Empty = today."],["Description","What it was for."],["Amount","Required. For income, add a Type column with “Income”, or use a separate Credit column."],["Category",CATEGORIES.map(c=>c[2]).join(", ")+" (optional, guessed from the description if empty)"],["Bank","Bank or credit card it was paid with, e.g. Mashreq, ADCB (optional). Used for the per-bank totals in My Future → Monthly cash flow."],["Method","Cash, Card, Bank or Other (optional)"]]}]), "Excel");
 }
 function spExport(){
   const H = v => ({v, s:3});
   const tx = [...allSpend()].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   const months = [...new Set(tx.map(t=>monthOf(t.date)))].sort();
   return saveFile(`CashNest spending ${todayISO()}.xlsx`, XL.write([
-    {name:"Transactions", widths:[12,10,32,18,10,14,30], rows:[["Date","Type","Description","Category","Method","Amount","Notes"].map(H),
-      ...tx.map(t=>[{v:isoToSerial(t.date),s:1}, t.type==="income"?"Income":t.shared?"Shared":"Spending", t.desc||"", catOf(t).label, t.shared?`Shared · ${t.gname}`:(t.method||""), {v:t.amount/100,s:2}, t.notes||""])]},
+    {name:"Transactions", widths:[12,10,32,18,16,10,14,30], rows:[["Date","Type","Description","Category","Bank","Method","Amount","Notes"].map(H),
+      ...tx.map(t=>[{v:isoToSerial(t.date),s:1}, t.type==="income"?"Income":t.shared?"Shared":"Spending", t.desc||"", catOf(t).label, t.bank||"", t.shared?`Shared · ${t.gname}`:(t.method||""), {v:t.amount/100,s:2}, t.notes||""])]},
     {name:"Monthly summary", widths:[16,14,14,14], rows:[["Month","Income","Spent","Left over"].map(H),
       ...months.map(ym=>{ const s = monthTotals(ym); return [monthName(ym), {v:s.income/100,s:2}, {v:s.spent/100,s:2}, {v:(s.income-s.spent)/100,s:4}]; })]}
   ]), "Excel");
@@ -2633,7 +2662,9 @@ function renderFuture(){
   const efTarget = ess * (f.efMonths||6), efCovered = ess ? (f.efSaved||0)/ess : 0;
   const inp = (label, path, kind, val, suffix="") => `<div class="field"><label>${label}</label><div class="sfx"><input class="input" data-setting="future.${path}" data-kind="${kind}" value="${kind==="money"?fromCents(val||0):val}">${suffix?`<span>${suffix}</span>`:""}</div></div>`;
   return `
-    ${modHead("My Future", "Plan for retirement and build a safety net. All figures are in today's money.")}
+    ${modHead("My Future", S.futTab==="cash" ? "Money in and out, month by month: past and planned." : "Plan for retirement and build a safety net. All figures are in today's money.")}
+    <div class="tabs">${[["plan","🌱 Retirement & safety net"],["cash","📅 Monthly cash flow"]].map(([k,l])=>`<button class="tab ${S.futTab===k?"active":""}" data-futtab="${k}">${l}</button>`).join("")}</div>
+    ${S.futTab==="cash" ? renderCashFlow() : `
     <h3 class="sec">Retirement plan</h3>
     <div class="card calc-card">
       <div class="calc-in">
@@ -2678,7 +2709,7 @@ function renderFuture(){
         ${progress(pct(f.efSaved||0, efTarget), (f.efSaved||0)>=efTarget && efTarget ? "ok" : "")}
         <div class="s" style="margin-top:8px">${(f.efSaved||0)>=efTarget && efTarget ? "🎉 Your safety net is in place." : "Tip: create an “Emergency fund” goal in Savings Goals to track deposits towards it."}</div>
       </div>
-    </div>`;
+    </div>`}`;
 }
 
 /* ---------- Money Insights ---------- */
@@ -2862,6 +2893,7 @@ const EXTRA_MODALS = {
   "goal": [goalModal, bindGoal], "goalmoney": [goalMoneyModal, bindGoalMoney]
 };
 function personalClick(t){
+  if(cfClick(t)) return true;
   if(loanClick(t)) return true;
   if(curClick(t)) return true;
   if(t.dataset.act==='toggle-wide'){ toggleWide(); return true; }
@@ -2899,6 +2931,7 @@ function personalClick(t){
 }
 function personalChange(e){
   const el = e.target;
+  if(cfChange(el)) return true;
   const fmap = {"f-paid":"paid","f-who":"who","f-period":"period","f-from":"from","f-to":"to","f-split":"split"};
   if(fmap[el.id]){ S.gf[fmap[el.id]] = el.value; render(); return true; }
   if(el.hasAttribute && el.hasAttribute("data-futloans")){ saveSetting("future.countLoans", el.checked); return true; }
@@ -3161,6 +3194,16 @@ function passesFilters(e){
     if(F.split==="unsplit" ? !isUnsplit(e) : (isUnsplit(e) || (e.splitType||"exact")!==F.split)) return false; }
   return true;
 }
+
+/* banks you've used anywhere, for suggestions */
+function allBanks(){
+  const s = new Set();
+  (S.spend||[]).forEach(x => x.bank && s.add(x.bank));
+  (S.loans||[]).forEach(l => { if(l.bank) s.add(l.bank); else if(!l.card && l.dir==="owe") s.add(l.name); });
+  Object.values(S.groupExp||{}).forEach(list => (list||[]).forEach(e => e.bank && s.add(e.bank)));
+  return [...s].sort((a,b)=>a.localeCompare(b));
+}
+const bankDatalist = () => `<datalist id="bank-list">${allBanks().map(b=>`<option value="${esc(b)}">`).join("")}</datalist>`;
 
 /* "Everyone" tick box above an equal split */
 function allRow(g, inputs, attr){
@@ -3520,7 +3563,8 @@ function loanModal(m){
     </div>
     ${owe ? `<div class="field"><label>Due on day of the month (optional)</label><input class="input" id="l-due" type="number" min="1" max="31" value="${esc(m.dueDay)}" placeholder="taken from the first payment date" style="max-width:260px"></div>` : ""}
     <div class="s conv" id="l-hint">${loanHint(m)}</div>
-    <div class="field"><label>Notes (optional)</label><input class="input" id="l-notes" value="${esc(m.notes)}"></div>
+    <div class="row2"><div class="field"><label>Bank (optional)</label><input class="input" id="l-bank" list="bank-list" value="${esc(m.bank||"")}" placeholder="${cc ? "e.g. Mashreq (for Mashreq Platinum)" : "e.g. Emirates NBD"}">${bankDatalist()}<div class="s" style="margin-top:3px">Groups it with that bank in My Future → Monthly cash flow.</div></div>
+      <div class="field"><label>Notes (optional)</label><input class="input" id="l-notes" value="${esc(m.notes)}"></div></div>
     ${l && (l.entries||[]).length ? `<div class="field"><label>History</label><div class="card hist">${l.entries.map((e,i)=>({e,i})).sort((a,b)=>b.e.date.localeCompare(a.e.date) || b.i-a.i).map(x=>x.e).map(e => `
       <div class="dl"><span>${fmtDay(e.date)} · ${e.kind==="pay" ? (owe?"Payment":"Received") : (owe?"Interest / fee added":"Lent more")}${e.note?` · ${esc(e.note)}`:""}</span>
       <span style="display:flex;gap:6px;align-items:center"><b class="${e.kind==="pay" ? "pos" : "neg"}">${e.kind==="pay"?"− ":"+ "}${moneyFull(e.amount, l.cur||PC())}</b><button class="btn sm ghost" data-lentry-del="${esc(e.id)}" title="Delete this entry">✕</button></span></div>`).join("")}</div></div>` : ""}
@@ -3565,7 +3609,7 @@ function loanHint(m){
 }
 function bindLoan(ov, m){
   const $ = s => ov.querySelector(s);
-  const sync = () => { ["name","purpose","principal","start","monthly","rate","notes","end","first"].forEach(k => m[k==="end"?"endDate":k==="first"?"firstDue":k] = $("#l-"+k).value);
+  const sync = () => { ["name","purpose","principal","start","monthly","rate","notes","end","first","bank"].forEach(k => m[k==="end"?"endDate":k==="first"?"firstDue":k] = $("#l-"+k).value);
     if($("#l-due")) m.dueDay = $("#l-due").value; if($("#l-already")) m.already = $("#l-already").value; };
   ["principal","already","monthly","rate","end","start","first","due"].forEach(k => { const el = $("#l-"+k); if(el) el.addEventListener("input", () => { sync(); $("#l-hint").innerHTML = loanHint(m); }); });
   ov.querySelectorAll("[data-lcur]").forEach(b => b.onclick = () => { sync(); m.cur = b.dataset.lcur; renderModal(); });
@@ -3587,7 +3631,7 @@ function bindLoan(ov, m){
     if(due && (due<1 || due>31)) return err.textContent = "The due day should be between 1 and 31.";
     const prev = S.loans.find(x=>x.id===m.id);
     const entries = prev ? prev.entries||[] : (already ? [{id:uid(), date:m.start||todayISO(), kind:"pay", amount:already, note:"Paid before CashNest", opening:true}] : []);
-    const item = {...(prev||{}), id:m.id||uid(), dir:m.dir, name:m.name.trim(), purpose:m.purpose.trim(), cur:m.cur, principal, rate, monthly:monthlyFinal, dueDay:(due || (m.firstDue ? dayOf(m.firstDue) : 0)) || null, endDate:m.endDate||null, firstDue:m.firstDue||null, card:!!m.isCard,
+    const item = {...(prev||{}), id:m.id||uid(), dir:m.dir, name:m.name.trim(), purpose:m.purpose.trim(), cur:m.cur, principal, rate, monthly:monthlyFinal, dueDay:(due || (m.firstDue ? dayOf(m.firstDue) : 0)) || null, endDate:m.endDate||null, firstDue:m.firstDue||null, card:!!m.isCard, bank:(m.bank||"").trim(),
       start:m.start||todayISO(), notes:(m.notes||"").trim(), entries, createdAt:prev?.createdAt||Date.now()};
     if(await writeP(() => S.pStore.save("loans", item), prev ? "Loan updated" : "Loan added")) closeModal();
   };
@@ -3672,9 +3716,151 @@ function loanClick(t){
   const a = t.dataset.act;
   if(a==="loan-new-card"){ openModal({type:"loan", dir:"owe", isCard:true, name:t.dataset.card||"", purpose:"Easy Cash", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", firstDue:"", notes:""}); return true; }
   if(a==="loan-new-owe" || a==="loan-new-owed"){ openModal({type:"loan", dir:a==="loan-new-owe"?"owe":"owed", name:"", purpose:"", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", firstDue:"", notes:""}); return true; }
-  if(t.dataset.loanEdit){ const l = S.loans.find(x=>x.id===t.dataset.loanEdit); if(l) openModal({type:"loan", id:l.id, dir:l.dir, name:l.name, purpose:l.purpose||"", cur:l.cur||PC(), principal:fromCents(l.principal), start:l.start||"", monthly:l.monthly?fromCents(l.monthly):"", rate:l.rate||"", dueDay:l.dueDay||"", endDate:l.endDate||"", firstDue:l.firstDue||"", isCard:!!l.card, notes:l.notes||""}); return true; }
+  if(t.dataset.loanEdit){ const l = S.loans.find(x=>x.id===t.dataset.loanEdit); if(l) openModal({type:"loan", id:l.id, dir:l.dir, name:l.name, purpose:l.purpose||"", cur:l.cur||PC(), principal:fromCents(l.principal), start:l.start||"", monthly:l.monthly?fromCents(l.monthly):"", rate:l.rate||"", dueDay:l.dueDay||"", endDate:l.endDate||"", firstDue:l.firstDue||"", isCard:!!l.card, bank:l.bank||"", notes:l.notes||""}); return true; }
   if(t.dataset.loanPay){ const l = S.loans.find(x=>x.id===t.dataset.loanPay); if(l) openModal({type:"loanpay", lid:l.id, kind:"pay", amount: l.monthly && loanBalance(l) ? fromCents(Math.min(l.monthly, loanBalance(l))) : "", date:todayISO(), note:"", toSpend: l.dir==="owe"}); return true; }
   if(t.dataset.loanPdf){ const l = S.loans.find(x=>x.id===t.dataset.loanPdf); if(l) loanPdf(l); return true; }
+  return false;
+}
+
+/* ===================== My Future → Monthly cash flow ===================== */
+S.futTab = (() => { try { return localStorage.getItem("cashnest-futtab") || "plan"; } catch { return "plan"; } })();
+const OTHER = "\u0000other";
+function cfSettings(){
+  const cf = S.settings.cf || {}, cm = thisMonth();
+  return {from: cf.from || addMonths(cm,-2), to: cf.to || addMonths(cm,9), opening: cf.opening || 0,
+    income: cf.income != null ? cf.income : ((S.settings.budget||{}).income || 0), useExpected: cf.useExpected !== false};
+}
+/* the instalment a loan schedules for month m (in your currency), or 0 */
+function scheduledIn(l, m){
+  if(!l.monthly) return 0;
+  const start = monthOf(firstDueDate(l));
+  let end = l.endDate ? monthOf(l.endDate) : null;
+  if(!end){ const p = payoff(l); if(p.date) end = p.date; else if(p.done) end = addMonths(thisMonth(), -1); }
+  if(m < start || (end && m > end)) return 0;
+  if(m > thisMonth() && !loanBalance(l)) return 0;
+  return inPC(l.monthly, l.cur);
+}
+function cashFlow(){
+  const C = cfSettings(), cm = thisMonth(), months = [];
+  for(let m = C.from; m <= C.to && months.length < 60; m = addMonths(m,1)) months.push(m);
+  const N = months.length, z = () => months.map(() => 0), idx = new Map(months.map((m,i)=>[m,i]));
+  // income
+  const incRec = z(); S.spend.forEach(x => { if(x.type!=="income" || x.loanId) return; const i = idx.get(monthOf(x.date)); if(i!=null) incRec[i] += x.amount; });
+  const incEst = months.map((m,i) => !incRec[i] && C.useExpected && C.income > 0);
+  const income = months.map((m,i) => incEst[i] ? C.income : incRec[i]);
+  const owedRows = S.loans.filter(l => l.dir==="owed").map(l => ({label:`${l.name}${l.purpose?` · ${l.purpose}`:""}`, vals: months.map(m => scheduledIn(l, m))})).filter(r => r.vals.some(v=>v));
+  const owedTotal = months.map((m,i) => owedRows.reduce((a,r)=>a+r.vals[i],0));
+  const incomeTotal = months.map((m,i) => income[i] + owedTotal[i]);
+  // banks
+  const banks = new Map();
+  const bank = key => { if(!banks.has(key)) banks.set(key, {name:key, spend:z(), group:z(), shared:z(), items:[]}); return banks.get(key); };
+  S.spend.forEach(x => { if(x.type==="income" || x.loanId || x.category==="loans") return; const i = idx.get(monthOf(x.date)); if(i==null) return;
+    bank((x.bank||"").trim() || OTHER).spend[i] += x.amount; });
+  // group expenses you paid on a card: the full amount hits that card
+  const st = S.settings || {};
+  for(const g of S.groups){
+    const me = meIn(g); if(!me) continue;
+    for(const e of (S.groupExp[g.id]||[])){
+      if(e.kind==="settle" || e.paidBy!==me.id || !(e.bank||"").trim()) continue;
+      const i = idx.get(monthOf(e.date)); if(i==null) continue;
+      bank(e.bank.trim()).group[i] += toBase(e.amount, g.currency, PC());
+    }
+  }
+  // your share of group expenses (skip ones you paid on a card: already counted in full above)
+  if(st.sharedAll !== false) sharedItems().forEach(x => { if(x.payerMe && x.bankPaid) return; const i = idx.get(monthOf(x.date)); if(i!=null) bank(OTHER).shared[i] += x.amount; });
+  // instalments
+  S.loans.filter(l => l.dir==="owe").forEach(l => {
+    const vals = months.map(m => scheduledIn(l, m)); if(!vals.some(v=>v)) return;
+    const key = (l.bank||"").trim() || l.name;
+    bank(key).items.push({label: l.card ? `💳 ${l.purpose||"Easy Cash"} · ${l.name}` : `🏦 ${l.purpose||"Loan"}${l.bank && l.bank!==l.name ? ` · ${l.name}` : ""}`, vals});
+  });
+  const list = [...banks.values()].map(b => {
+    const sub = months.map((m,i) => b.spend[i] + b.group[i] + b.shared[i] + b.items.reduce((a,it)=>a+it.vals[i],0));
+    return {...b, sub, total: sub.reduce((a,v)=>a+v,0)};
+  }).filter(b => b.total).sort((a,b) => a.name===OTHER ? 1 : b.name===OTHER ? -1 : b.total - a.total);
+  const due = months.map((m,i) => list.reduce((a,b)=>a+b.sub[i],0));
+  const left = months.map((m,i) => incomeTotal[i] - due[i]);
+  let run = C.opening; const running = left.map(v => (run += v));
+  return {C, cm, months, income, incEst, owedRows, incomeTotal, banks:list, due, left, running};
+}
+function renderCashFlow(){
+  const F = cashFlow(), {C, cm, months} = F;
+  const opts = sel => { const out = []; for(let i=-36;i<=60;i++){ const m = addMonths(cm,i); out.push(`<option value="${m}" ${m===sel?"selected":""}>${monthName(m)}</option>`); } return out.join(""); };
+  const cell = (v, cls="") => `<td class="${cls}">${v ? pm(v) : `<span class="muted">—</span>`}</td>`;
+  const head = `<tr><th class="stick">Month</th>${months.map(m=>`<th class="${m===cm?"curm":""}">${monthName(m,true)}${m===cm?"<br><span>now</span>":m>cm?"<br><span>plan</span>":""}</th>`).join("")}</tr>`;
+  const sec = (label, extra="") => `<tr class="cf-sec"><td class="stick" colspan="1">${label}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+  let body = "";
+  body += sec("Income");
+  body += `<tr><td class="stick">Income${C.useExpected && C.income ? ` <span class="s">(est. = expected)</span>` : ""}</td>${months.map((m,i)=>`<td class="${F.incEst[i]?"est":""}">${F.income[i] ? pm(F.income[i]) + (F.incEst[i] ? `<span class="est-tag">est.</span>` : "") : `<span class="muted">—</span>`}</td>`).join("")}</tr>`;
+  F.owedRows.forEach(r => body += `<tr><td class="stick sub">🤲 ${esc(r.label)}</td>${r.vals.map(v=>cell(v)).join("")}</tr>`);
+  body += `<tr class="cf-total"><td class="stick">Total income</td>${F.incomeTotal.map(v=>cell(v,"pos")).join("")}</tr>`;
+  body += sec("Payables by bank");
+  F.banks.forEach(b => {
+    const nm = b.name===OTHER ? "No bank / cash" : b.name;
+    body += `<tr class="cf-bank"><td class="stick">${b.name===OTHER?"👛":"🏦"} ${esc(nm)}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+    if(b.spend.some(v=>v)) body += `<tr><td class="stick sub">${b.name===OTHER ? "Spending" : "Card / account spending"}</td>${b.spend.map(v=>cell(v)).join("")}</tr>`;
+    if(b.group.some(v=>v)) body += `<tr><td class="stick sub">🤝 Group expenses you paid</td>${b.group.map(v=>cell(v)).join("")}</tr>`;
+    if(b.shared.some(v=>v)) body += `<tr><td class="stick sub">🤝 Your share of group expenses</td>${b.shared.map(v=>cell(v)).join("")}</tr>`;
+    b.items.forEach(it => body += `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map(v=>cell(v)).join("")}</tr>`);
+    body += `<tr class="cf-subtotal"><td class="stick">Subtotal · ${esc(nm)}</td>${b.sub.map(v=>cell(v)).join("")}</tr>`;
+  });
+  if(!F.banks.length) body += `<tr><td class="stick sub muted">Nothing to pay in this period</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+  body += `<tr class="cf-total"><td class="stick">Total due</td>${F.due.map((v,i)=>`<td class="${v > F.incomeTotal[i] ? "overspend" : ""}">${v ? pm(v) : "—"}</td>`).join("")}</tr>`;
+  body += `<tr class="cf-total"><td class="stick">Left over (income − due)</td>${F.left.map(v=>`<td class="${v<0?"overspend":"pos"}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
+  body += `<tr class="cf-run"><td class="stick">Running balance${C.opening?` <span class="s">(from ${pm(C.opening)})</span>`:""}</td>${F.running.map(v=>`<td class="${v<0?"overspend":""}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
+  const over = F.left.filter(v=>v<0).length, firstNeg = F.running.findIndex(v=>v<0);
+  return `
+    <div class="cf-controls card">
+      <div class="cf-row">
+        <label class="flt"><span>From</span><select class="input" id="cf-from">${opts(C.from)}</select></label>
+        <label class="flt"><span>To</span><select class="input" id="cf-to">${opts(C.to)}</select></label>
+        <div class="cf-presets">${[["p36","Last 3 + next 6"],["n12","Next 12 months"],["yr","This year"],["l6","Last 6 months"]].map(([k,l])=>`<button class="btn sm" data-cfp="${k}">${l}</button>`).join("")}</div>
+        <span style="flex:1"></span><button class="btn sm" data-act="cf-xlsx">⬇ Excel</button>
+      </div>
+      <div class="cf-row">
+        <label class="flt"><span>Expected monthly income</span><input class="input" data-setting="cf.income" data-kind="money" value="${C.income?fromCents(C.income):""}" placeholder="e.g. 18000"></label>
+        <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-useexp" ${C.useExpected?"checked":""}> <span class="s">Use it for months with no income recorded</span></label>
+        <label class="flt"><span>Balance at the start of ${monthName(C.from)}</span><input class="input" data-setting="cf.opening" data-kind="money" value="${C.opening?fromCents(C.opening):""}" placeholder="0.00"></label>
+      </div>
+    </div>
+    <div class="cf-summary">
+      ${over ? `<span class="overspend">⚠️ Overspending in ${over} month${over>1?"s":""}</span>` : `<span class="pos">✓ No month spends more than it earns</span>`}
+      ${firstNeg>=0 ? ` · <span class="overspend">Running balance goes negative in ${monthName(months[firstNeg])}</span>` : ""}
+      · ending balance <b class="${F.running.at(-1)<0?"overspend":""}">${F.running.at(-1)<0?"− ":""}${pm(Math.abs(F.running.at(-1)||0))}</b>
+    </div>
+    <div class="card tbl-wrap freeze cf-wrap"><table class="bk cf-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    <div class="s" style="margin-top:10px">Spending comes from Daily Spending (add a <b>Bank</b> to each item, or a Bank column when importing). Instalments come from My Loans and credit card plans, each in the month it's due. Loan payments recorded in Daily Spending aren't counted twice. <b class="overspend">Red bold</b> = more going out than coming in, or a negative running balance.</div>`;
+}
+function cfExport(){
+  const F = cashFlow(), H = v => ({v, s:3}), M = c => ({v:c/100, s:2});
+  const rows = [["", ...F.months.map(m=>monthName(m))].map(H)];
+  rows.push(["Income", ...F.income.map(M)]);
+  F.owedRows.forEach(r => rows.push([`  ${r.label}`, ...r.vals.map(M)]));
+  rows.push([{v:"Total income",s:5}, ...F.incomeTotal.map(v=>({v:v/100,s:4}))], []);
+  F.banks.forEach(b => { const nm = b.name===OTHER ? "No bank / cash" : b.name; rows.push([{v:nm,s:5}]);
+    if(b.spend.some(v=>v)) rows.push(["  Spending", ...b.spend.map(M)]);
+    if(b.group.some(v=>v)) rows.push(["  Group expenses you paid", ...b.group.map(M)]);
+    if(b.shared.some(v=>v)) rows.push(["  Your share of group expenses", ...b.shared.map(M)]);
+    b.items.forEach(it => rows.push([`  ${it.label.replace(/^[^\w]+/u,"")}`, ...it.vals.map(M)]));
+    rows.push([{v:`Subtotal ${nm}`,s:5}, ...b.sub.map(v=>({v:v/100,s:4}))]); });
+  rows.push([], [{v:"Total due",s:5}, ...F.due.map(v=>({v:v/100,s:4}))], [{v:"Left over",s:5}, ...F.left.map(v=>({v:v/100,s:4}))], [{v:"Running balance",s:5}, ...F.running.map(v=>({v:v/100,s:4}))]);
+  return saveFile(`CashNest cash flow ${monthName(F.C.from)} - ${monthName(F.C.to)}.xlsx`, XL.write([{name:"Cash flow", rows, widths:[36, ...F.months.map(()=>13)]}]), "Excel");
+}
+function cfClick(t){
+  if(t.dataset.futtab){ S.futTab = t.dataset.futtab; try { localStorage.setItem("cashnest-futtab", S.futTab); } catch {} render(); return true; }
+  if(t.dataset.cfp){ const cm = thisMonth(), y = cm.slice(0,4);
+    const r = {p36:[addMonths(cm,-3), addMonths(cm,6)], n12:[cm, addMonths(cm,11)], yr:[`${y}-01`, `${y}-12`], l6:[addMonths(cm,-5), cm]}[t.dataset.cfp];
+    saveSetting("cf", {...(S.settings.cf||{}), from:r[0], to:r[1]}); return true; }
+  if(t.dataset.act==="cf-xlsx"){ cfExport(); return true; }
+  return false;
+}
+function cfChange(el){
+  if(el.id==="cf-from" || el.id==="cf-to"){
+    const cf = {...(S.settings.cf||{}), ...cfSettings(), ...(S.settings.cf||{})};
+    const C = cfSettings(); let from = el.id==="cf-from" ? el.value : C.from, to = el.id==="cf-to" ? el.value : C.to;
+    if(from > to) [from, to] = el.id==="cf-from" ? [from, from] : [to, to];
+    saveSetting("cf", {...(S.settings.cf||{}), from, to}); return true; }
+  if(el.id==="cf-useexp"){ saveSetting("cf.useExpected", el.checked); return true; }
   return false;
 }
 
