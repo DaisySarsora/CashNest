@@ -293,6 +293,7 @@ tr:last-child td{border-bottom:0}
 .login-card .linkbtn{align-self:center}
 .youare{display:flex;align-items:center;gap:8px;margin-top:8px}
 .youare .input{width:auto;padding:4px 8px;font-size:13px}
+.mem .btn.used{opacity:.4}
 </style>
 </head>
 <body>
@@ -790,10 +791,23 @@ function renderModal(){
   bindModal(ov);
 }
 
+/* which expenses mention each person (id → list of labels) */
+function memberUsage(){
+  const use = new Map(), g = group();
+  if(!S.modal || !S.modal.id || !g) return use;
+  const add = (id, label) => { if(!id) return; if(!use.has(id)) use.set(id, []); use.get(id).push(label); };
+  S.expenses.forEach(e => {
+    if(e.kind==="settle"){ const l = `payment ${memberName(g,e.from)} → ${memberName(g,e.to)} (${fmtDay(e.date)})`; add(e.from, l); add(e.to, l); return; }
+    const l = `“${e.desc}”${isUnsplit(e) ? " (not split yet)" : ""}`;
+    add(e.paidBy, l + " as the payer");
+    Object.entries(e.splits||{}).forEach(([id,c]) => { if(c>0) add(id, l); });
+  });
+  return use;
+}
+
 /* group modal */
 function groupModal(m){
-  const usedIds = new Set();
-  if(m.id) S.expenses.forEach(e => { [e.paidBy,e.from,e.to,...Object.keys(e.splits||{})].forEach(x=>x&&usedIds.add(x)); });
+  const usedIds = memberUsage();
   return `<header><h3>${m.id?"Edit group":"New group"}</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
     <div class="field"><label>Group name</label><input class="input" id="g-name" placeholder="e.g. Flat 402, Georgia trip" value="${esc(m.name)}"></div>
@@ -803,7 +817,7 @@ function groupModal(m){
       <div class="mem-list">${m.members.map((p,i)=>`<div class="mem">
         <span class="av" style="background:${PALETTE[i%PALETTE.length]}">${esc(initials(p.name))}</span>
         <input class="input" data-mem="${i}" value="${esc(p.name)}" placeholder="Name">
-        <button class="btn ghost sm" data-delmem="${i}" ${usedIds.has(p.id)?'disabled title="Has expenses in this group"':""}>✕</button></div>`).join("")}
+        <button class="btn ghost sm ${usedIds.has(p.id)?"used":""}" data-delmem="${i}" title="${usedIds.has(p.id)?"In some expenses. Click to see which":"Remove"}">✕</button></div>`).join("")}
       </div>
       <div class="mem" style="margin-top:8px"><input class="input" id="g-newmem" placeholder="Add a person, then press Enter"><button class="btn sm" data-addmem>Add</button></div>
     </div>
@@ -951,7 +965,14 @@ function bindModal(ov){
       m.members.push({id:uid(), name:v}); renderModal(); ov.ownerDocument.querySelector("#g-newmem")?.focus(); };
     $("[data-addmem]").onclick = addMem;
     $("#g-newmem").onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); addMem(); } };
-    ov.querySelectorAll("[data-delmem]").forEach(b => b.onclick = () => { sync(); m.members.splice(+b.dataset.delmem,1); renderModal(); });
+    ov.querySelectorAll("[data-delmem]").forEach(b => b.onclick = () => {
+      sync(); const p = m.members[+b.dataset.delmem], uses = memberUsage().get(p.id);
+      if(uses && uses.length){
+        const list = [...new Set(uses)];
+        $("#g-err").innerHTML = `Can't remove <b>${esc(p.name)}</b> yet. They're in ${list.slice(0,4).map(esc).join(", ")}${list.length>4?` and ${list.length-4} more`:""}. Change or delete ${list.length>1?"those":"that"} first, or just rename them.`;
+        return;
+      }
+      m.members.splice(+b.dataset.delmem,1); renderModal(); });
     $("[data-savegroup]").onclick = async () => {
       sync();
       const pending = $("#g-newmem").value.trim(); if(pending) m.members.push({id:uid(), name:pending});
