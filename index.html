@@ -308,6 +308,37 @@ tr:last-child td{border-bottom:0}
 .impinfo b{word-break:break-all}
 .big-pick button{font-size:14px;padding:8px 12px}
 .selbar .btn.primary{padding:6px 10px}
+
+/* full width */
+body.wide main{max-width:none}
+body.wide .app{grid-template-columns:68px 1fr}
+body.wide aside{padding:16px 8px;align-items:center}
+body.wide aside .brand{padding:0 0 6px}
+body.wide aside .brand h1,body.wide .nav .nl,body.wide .side-foot,body.wide .glist.sub .gitem>span:last-child,body.wide .glist.sub>.btn{display:none}
+body.wide .nav{justify-content:center;padding:10px 0}
+body.wide .nav .ni{font-size:18px}
+body.wide .glist.sub{margin:2px 0 6px;padding:0;border:0;align-items:center}
+body.wide .glist.sub .gitem{justify-content:center;padding:4px}
+body.wide main{padding:22px 24px 100px}
+table.wide-table td.desc{white-space:normal;min-width:150px;max-width:280px;line-height:1.3}
+body.wide table.wide-table{min-width:0;font-size:13px}
+body.wide table.wide-table th,body.wide table.wide-table td{padding:8px 9px}
+body.wide table.wide-table th{white-space:normal;vertical-align:bottom;font-size:11px}
+body.wide table.wide-table td.desc{max-width:240px}
+.wide-btn{white-space:nowrap}
+@media (max-width:760px){ .wide-btn,.hide-sm{display:none} body.wide .app{grid-template-columns:1fr} }
+
+.curbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin:-6px 0 10px;font-size:13px}
+.curbar .seg.mini{padding:2px}
+.curbar .seg.mini button{padding:4px 12px;font-size:12.5px;font-weight:600}
+.curbar .rate-in{width:90px;padding:5px 8px}
+.curbar .conv-note{flex-basis:100%;text-align:right;color:var(--warn)}
+
+.amt-lbl{display:flex !important;align-items:center;justify-content:space-between;gap:8px}
+.curpick{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px}
+.curpick button{border:0;background:none;padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600;color:var(--muted)}
+.curpick button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.conv{margin-top:2px;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -354,10 +385,48 @@ function calc(src){
 const isFormula = v => /[+\-*/()×÷xX]/.test(String(v ?? "").trim().replace(/^-/,""));
 const toCents = v => { const n = calc(v); return isFinite(n) ? Math.round(n*100) : NaN; };
 const fromCents = c => (c/100).toFixed(2);
-function money(cents, cur){
+function moneyFull(cents, cur){
   try { return new Intl.NumberFormat(undefined,{style:"currency",currency:cur||"AED"}).format(cents/100); }
   catch { return (cur||"") + " " + (cents/100).toFixed(2); }
 }
+/* ---- display currency (AED ⇄ PHP) ---- */
+const FX = { view:null, rate:16.70, src:"default", at:0 };
+try { const v = localStorage.getItem("cashnest-viewcur"); if(v) FX.view = v;
+      const r = JSON.parse(localStorage.getItem("cashnest-rate")||"null"); if(r && r.rate>0) Object.assign(FX, {rate:r.rate, src:r.src||"you", at:r.at||0}); } catch {}
+function conv(cents, from){
+  const to = FX.view;
+  if(!to || !from || from===to) return {c:cents, cur:from};
+  if(from==="AED" && to==="PHP") return {c:Math.round(cents*FX.rate), cur:"PHP"};
+  if(from==="PHP" && to==="AED") return {c:Math.round(cents/FX.rate), cur:"AED"};
+  return {c:cents, cur:from};
+}
+function money(cents, cur){
+  if(S.modal && !S._pageRender) return moneyFull(cents, cur);
+  const x = conv(cents, cur||"AED");
+  const n = (x.c/100).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  return x.cur === headerCur() ? n : `${x.cur} ${n}`;
+}
+/* ---- entry currency: type an amount in AED or PHP; it's saved in the group's / your currency ---- */
+const PAIR = ["AED","PHP"];
+const canPickCur = base => PAIR.includes(base);
+function toBase(c, from, base){
+  if(!from || from===base) return c;
+  if(from==="PHP" && base==="AED") return Math.round(c / FX.rate);
+  if(from==="AED" && base==="PHP") return Math.round(c * FX.rate);
+  return c;
+}
+const entryCur = (m, base) => m.cur || (canPickCur(base) ? "AED" : base);
+const curPick = (m, base, attr) => canPickCur(base)
+  ? `<span class="curpick">${PAIR.map(c=>`<button type="button" data-${attr}="${c}" class="${entryCur(m,base)===c?"on":""}">${c}</button>`).join("")}</span>`
+  : `<span>(${esc(base)})</span>`;
+function convNote(m, base, amountStr){
+  const cur = entryCur(m, base); if(cur===base) return "";
+  const c = toCents(amountStr ?? m.amount);
+  const rate = `1 AED = ${FX.rate} PHP`;
+  return (isFinite(c) && c>0) ? `≈ ${moneyFull(toBase(c,cur,base), base)} · ${rate}` : `Saved in ${base} at ${rate}`;
+}
+const origTag = (m, base, entryCents) => { const cur = entryCur(m, base); return cur===base ? {} : {origAmount:entryCents, origCurrency:cur, fxRate:FX.rate}; };
+const enteredAs = x => x && x.origCurrency && x.origAmount ? ` · entered ${moneyFull(x.origAmount, x.origCurrency)}` : "";
 const initials = n => String(n||"?").trim().split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
 function colorFor(id, members){
   const i = Math.max(0,(members||[]).findIndex(m=>m.id===id));
@@ -526,12 +595,17 @@ const root = document.getElementById("root");
 
 function render(){
   if(!S.store) return;
+  S._pageRender = true;
+  try { renderPage(); } finally { S._pageRender = false; }
+  if(S.modal && !document.querySelector(".overlay")) renderModal();
+}
+function renderPage(){
   const act = document.activeElement, fk = act && act !== document.body ? (act.id ? "#"+act.id : act.dataset && act.dataset.setting ? `[data-setting="${act.dataset.setting}"]` : null) : null;
   const sel = fk && typeof act.selectionStart==="number" ? [act.selectionStart, act.selectionEnd] : null;
   const mod = S.module, g = group(), split = mod==="split-share";
   const groupsSub = `<div class="glist sub">
       ${S.groups.map((x,i)=>`
-        <button class="gitem ${x.id===S.gid?"active":""}" data-group="${esc(x.id)}">
+        <button class="gitem ${x.id===S.gid?"active":""}" data-group="${esc(x.id)}" title="${esc(x.name)}">
           <span class="dot" style="background:${PALETTE[i%PALETTE.length]}22;color:${PALETTE[i%PALETTE.length]}">${esc(initials(x.name))}</span>
           <span><div>${esc(x.name)}</div><div class="meta">${x.members.length} people · ${esc(x.currency)}</div></span>
         </button>`).join("")}
@@ -559,15 +633,14 @@ function render(){
       <aside>
         <div class="brand"><div class="logo">${LOGO}</div><h1>CashNest</h1></div>
         <nav class="mods">
-          ${MODULES.map(([id,ic,l]) => `<button class="nav ${id===mod?"on":""}" data-nav="${id}"><span class="ni">${ic}</span>${l}</button>${id==="split-share" && split ? groupsSub : ""}`).join("")}
+          ${MODULES.map(([id,ic,l]) => `<button class="nav ${id===mod?"on":""}" data-nav="${id}" title="${l}"><span class="ni">${ic}</span><span class="nl">${l}</span></button>${id==="split-share" && split ? groupsSub : ""}`).join("")}
         </nav>
         <div class="side-foot">${S.sb ? `Signed in as <b>${esc(S.userEmail)}</b><br><button class="linkbtn" data-act="signout">Sign out</button>` : S.pLocal ? "Saved in this browser" : "Personal pages are private to you"}</div>
       </aside>
-      <main>${notices}${content}</main>
+      <main>${notices}${curBar()}${content}</main>
     </div>
     ${fab}`;
   if(fk){ const el = root.querySelector(fk); if(el){ el.focus(); if(sel && typeof el.setSelectionRange==="function") try { el.setSelectionRange(sel[0], sel[1]); } catch {} } }
-  if(S.modal && !document.querySelector(".overlay")) renderModal();
 }
 
 function renderWelcome(){
@@ -664,17 +737,17 @@ function expenseRow(g, e){
   const dateHtml = S.sel.on ? `<div class="date">${selBox(picked)}</div>` : `<div class="date">${d.toLocaleDateString(undefined,{month:"short"})}<b>${d.getDate()}</b></div>`;
   if(e.kind === "settle"){
     return `<button class="erow settle-row${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">🤝</div>
-      <div><div class="t">${esc(memberName(g,e.from))} paid ${esc(memberName(g,e.to))}</div><div class="s">Payment${e.notes?" · "+esc(e.notes):""}</div></div>
+      <div><div class="t">${esc(memberName(g,e.from))} paid ${esc(memberName(g,e.to))}</div><div class="s">Payment${e.notes?" · "+esc(e.notes):""}${enteredAs(e)}</div></div>
       <div class="amt pos">${money(e.amount,g.currency)}</div></button>`;
   }
   const c = CAT[e.category] || CAT.other;
   if(isUnsplit(e)) return `<button class="erow unsplit${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
-    <div><div class="t">${esc(e.desc)} <span class="badge">Needs splitting</span></div><div class="s">${esc(memberName(g,e.paidBy))} paid · click to choose who shares it</div></div>
+    <div><div class="t">${esc(e.desc)} <span class="badge">Needs splitting</span></div><div class="s">${esc(memberName(g,e.paidBy))} paid · click to choose who shares it${enteredAs(e)}</div></div>
     <div class="amt">${money(e.amount,g.currency)}<div class="s">${c.label}</div></div></button>`;
   const n = Object.keys(e.splits||{}).length;
   const method = {equal:"split equally",exact:"exact amounts",percent:"by percentage",shares:"by shares"}[e.splitType] || "split";
   return `<button class="erow${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
-    <div><div class="t">${esc(e.desc)}</div><div class="s">${esc(memberName(g,e.paidBy))} paid · ${n} ${n===1?"person":"people"}, ${method}</div></div>
+    <div><div class="t">${esc(e.desc)}</div><div class="s">${esc(memberName(g,e.paidBy))} paid · ${n} ${n===1?"person":"people"}, ${method}${enteredAs(e)}</div></div>
     <div class="amt">${money(e.amount,g.currency)}<div class="s">${c.label}</div></div></button>`;
 }
 
@@ -708,17 +781,17 @@ function renderBreakdown(g, bal, paid, share){
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px" id="breakdown">
       <h3 class="sec">${fm ? `Expenses charged to ${esc(fm.name)}` : "Expense breakdown"}</h3>
-      ${fm ? "" : `<span style="font-size:13px;color:var(--muted)">Click a person above to see just their expenses</span>`}
+      <span style="display:flex;align-items:center;gap:10px">${fm ? "" : `<span class="s hide-sm">Click a person above to see just their expenses</span>`}${wideBtn()}</span>
     </div>
     ${detail}
     <div class="card tbl-wrap" style="margin-bottom:24px">
       ${!real.length ? `<div class="empty" style="padding:28px">${fm?`No expenses charged to ${esc(fm.name)} yet.`:"No expenses yet."}</div>` : `
-      <table class="bk">
+      <table class="bk wide-table">
         <thead><tr><th>Date</th><th>Expense</th><th>Paid by</th><th>Total</th>
           ${g.members.map(m=>`<th class="${fm&&fm.id===m.id?"hl":""}">${esc(m.name)}</th>`).join("")}</tr></thead>
         <tbody>${real.map(e => `<tr data-exp="${esc(e.id)}">
           <td class="muted">${fmtD(e.date)}</td>
-          <td><span style="margin-right:6px">${(CAT[e.category]||CAT.other).icon}</span>${esc(e.desc)}</td>
+          <td class="desc" title="${esc(e.desc)}"><span style="margin-right:6px">${(CAT[e.category]||CAT.other).icon}</span>${esc(e.desc)}</td>
           <td>${esc(memberName(g,e.paidBy))}</td>
           <td><b>${money(e.amount,cur)}</b></td>
           ${g.members.map(m => { const c=(e.splits||{})[m.id]||0; return `<td class="${fm&&fm.id===m.id?"hl":""} ${c?"":"muted"}">${c?money(c,cur):"—"}</td>`; }).join("")}
@@ -849,7 +922,7 @@ function groupModal(m){
 
 /* expense modal */
 function expenseModal(m){
-  const g = group();
+  const g = group(), ec = entryCur(m, g.currency);
   const total = toCents(m.amount) || 0;
   const comp = computeSplit(m, g);
   const methods = [["equal","Equally"],["exact","Exact"],["percent","%"],["shares","Shares"]];
@@ -857,7 +930,7 @@ function expenseModal(m){
   <div class="body">
     <div class="field"><label>What was it for?</label><input class="input" id="e-desc" placeholder="e.g. Dinner at Al Fanar" value="${esc(m.desc)}"></div>
     <div class="row2">
-      <div class="field"><label>Amount (${esc(g.currency)})</label><input class="input amount-in" id="e-amt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(m.amount)}"><div class="calc" id="e-amt-calc">${calcPreview(m.amount, g)}</div></div>
+      <div class="field"><label class="amt-lbl">Amount ${curPick(m, g.currency, "ecur")}</label><input class="input amount-in" id="e-amt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(m.amount)}"><div class="calc" id="e-amt-calc">${calcPreview(m.amount, {currency:ec})}</div><div class="s conv" id="e-conv">${convNote(m, g.currency)}</div></div>
       <div class="field"><label>Date</label><input class="input" id="e-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
     </div>
     <div class="field"><label>Category</label><div class="cat-pick">${CATEGORIES.map(([k,i,l])=>`<button type="button" class="${m.category===k?"on":""}" data-cat="${k}">${i} ${l}</button>`).join("")}</div></div>
@@ -871,11 +944,11 @@ function expenseModal(m){
         let ctrl;
         if(m.splitType==="equal") ctrl = `<input type="checkbox" data-split="${esc(p.id)}" ${v?"checked":""}>`;
         else ctrl = `<span></span>`;
-        const inputCell = m.splitType==="equal" ? `<div class="share">${comp.splits[p.id]?money(comp.splits[p.id],g.currency):"—"}</div>`
+        const inputCell = m.splitType==="equal" ? `<div class="share">${comp.splits[p.id]?money(comp.splits[p.id],ec):"—"}</div>`
           : m.splitType==="exact" ? `<input class="input" type="text" inputmode="decimal" autocomplete="off" data-split="${esc(p.id)}" value="${esc(v??"")}" placeholder="0.00">`
           : `<input class="input" type="number" min="0" step="${m.splitType==="shares"?"1":"0.01"}" data-split="${esc(p.id)}" value="${esc(v??"")}" placeholder="${m.splitType==="percent"?"%":"0"}">`;
-        const below = m.splitType==="exact" ? `<div class="calc" data-calc="${esc(p.id)}">${calcPreview(v, g)}</div>`
-          : m.splitType!=="equal" ? `<div class="share" style="text-align:left" data-preview="${esc(p.id)}">${comp.splits[p.id]?money(comp.splits[p.id],g.currency):""}</div>` : "";
+        const below = m.splitType==="exact" ? `<div class="calc" data-calc="${esc(p.id)}">${calcPreview(v, {currency:ec})}</div>`
+          : m.splitType!=="equal" ? `<div class="share" style="text-align:left" data-preview="${esc(p.id)}">${comp.splits[p.id]?money(comp.splits[p.id],ec):""}</div>` : "";
         return `<div class="sp">${m.splitType==="equal"?ctrl:av(p,g.members)}<div>${esc(p.name)}${below}</div>${inputCell}</div>`;
       }).join("")}
       ${m.splitType==="exact" ? `<div class="hint">Tip: you can type a sum, e.g. <b>(800-50)/3+50</b></div>` : ""}
@@ -894,7 +967,7 @@ function calcPreview(v, g){
   const c = toCents(v);
   if(String(v ?? "").trim() && !isFinite(c)) return `<span class="bad">Can't read this sum</span>`;
   if(!isFormula(v)) return "";
-  return isFinite(c) ? `= ${money(c, g.currency)}` : `<span class="bad">Can't read this sum</span>`;
+  return isFinite(c) ? `= ${moneyFull(c, g.currency)}` : `<span class="bad">Can't read this sum</span>`;
 }
 function computeSplit(m, g){
   const total = toCents(m.amount) || 0;
@@ -919,11 +992,11 @@ function computeSplit(m, g){
 function splitStatus(comp, total, g, m){
   if(m.splitType==="equal"){
     const n = Object.keys(comp.splits).length;
-    return `<span>${n} ${n===1?"person":"people"}</span><span>${n&&total?money(Math.floor(total/n),g.currency)+" each":""}</span>`;
+    return `<span>${n} ${n===1?"person":"people"}</span><span>${n&&total?money(Math.floor(total/n),entryCur(m, g.currency))+" each":""}</span>`;
   }
   if(m.splitType==="exact"){
     const left = comp.left ?? total;
-    return `<span>${money(comp.sum||0,g.currency)} of ${money(total,g.currency)}</span><span class="${left===0?"pos":"neg"}">${left===0?"✓ Adds up":money(Math.abs(left),g.currency)+(left>0?" left":" over")}</span>`;
+    return `<span>${money(comp.sum||0,entryCur(m, g.currency))} of ${money(total,entryCur(m, g.currency))}</span><span class="${left===0?"pos":"neg"}">${left===0?"✓ Adds up":money(Math.abs(left),entryCur(m, g.currency))+(left>0?" left":" over")}</span>`;
   }
   if(m.splitType==="percent"){
     const p = Math.round((comp.pct||0)*100)/100;
@@ -934,7 +1007,7 @@ function splitStatus(comp, total, g, m){
 
 /* settle modal */
 function settleModal(m){
-  const g = group();
+  const g = group(), ec = entryCur(m, g.currency);
   const opts = sel => g.members.map(p=>`<option value="${esc(p.id)}" ${p.id===sel?"selected":""}>${esc(p.name)}</option>`).join("");
   return `<header><h3>${m.credit?"Add credit":m.id?"Edit payment / credit":"Record a payment"}</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
@@ -944,7 +1017,7 @@ function settleModal(m){
       <div class="field"><label>${m.credit?"Received by":"To whom"}</label><select class="input" id="s-to">${opts(m.to)}</select></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Amount (${esc(g.currency)})</label><input class="input amount-in" id="s-amt" type="text" inputmode="decimal" autocomplete="off" value="${esc(m.amount)}"><div class="calc" id="s-calc"></div></div>
+      <div class="field"><label class="amt-lbl">Amount ${curPick(m, g.currency, "scur")}</label><input class="input amount-in" id="s-amt" type="text" inputmode="decimal" autocomplete="off" value="${esc(m.amount)}"><div class="calc" id="s-calc">${calcPreview(m.amount, {currency:ec})}</div><div class="s conv" id="s-conv">${convNote(m, g.currency)}</div></div>
       <div class="field"><label>Date</label><input class="input" id="s-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
     </div>
     <div class="field"><label>Details${m.credit?"":" (optional)"}</label><input class="input" id="s-notes" value="${esc(m.notes)}" placeholder="${m.credit?"e.g. Cash for October rent":"e.g. Bank transfer"}"></div>
@@ -1018,10 +1091,10 @@ function bindModal(ov){
     const refreshSplit = () => {
       const comp = computeSplit(m, g);
       $("#e-status").innerHTML = splitStatus(comp, toCents(m.amount)||0, g, m);
-      $("#e-amt-calc").innerHTML = calcPreview(m.amount, g);
-      ov.querySelectorAll("[data-calc]").forEach(el => el.innerHTML = calcPreview(m.inputs[el.dataset.calc], g));
-      if(m.splitType==="equal") ov.querySelectorAll(".sp").forEach((row,i)=>{ const id=g.members[i].id; const sh=row.querySelector(".share"); if(sh) sh.textContent = comp.splits[id]?money(comp.splits[id],g.currency):"—"; });
-      ov.querySelectorAll("[data-preview]").forEach(el => { const c = comp.splits[el.dataset.preview]; el.textContent = c?money(c,g.currency):""; });
+      $("#e-amt-calc").innerHTML = calcPreview(m.amount, {currency:entryCur(m,g.currency)}); const cv = $("#e-conv"); if(cv) cv.textContent = convNote(m, g.currency);
+      ov.querySelectorAll("[data-calc]").forEach(el => el.innerHTML = calcPreview(m.inputs[el.dataset.calc], {currency:entryCur(m,g.currency)}));
+      if(m.splitType==="equal") ov.querySelectorAll(".sp").forEach((row,i)=>{ const id=g.members[i].id; const sh=row.querySelector(".share"); if(sh) sh.textContent = comp.splits[id]?money(comp.splits[id],entryCur(m,g.currency)):"—"; });
+      ov.querySelectorAll("[data-preview]").forEach(el => { const c = comp.splits[el.dataset.preview]; el.textContent = c?money(c,entryCur(m,g.currency)):""; });
     };
     $("#e-amt").oninput = () => { m.amount = $("#e-amt").value; refreshSplit(); };
     ov.querySelectorAll("[data-cat]").forEach(b => b.onclick = () => { syncTop(); m.category=b.dataset.cat; ov.querySelectorAll("[data-cat]").forEach(x=>x.classList.toggle("on",x===b)); });
@@ -1038,6 +1111,7 @@ function bindModal(ov){
       const h = () => { m.inputs[inp.dataset.split] = inp.type==="checkbox" ? inp.checked : inp.value; refreshSplit(); };
       inp.oninput = h; inp.onchange = h;
     });
+    ov.querySelectorAll("[data-ecur]").forEach(b => b.onclick = () => { syncTop(); m.cur = b.dataset.ecur; renderModal(); });
     $("[data-saveexp]").onclick = async () => {
       syncTop();
       const err = $("#e-err"); const total = toCents(m.amount);
@@ -1051,10 +1125,12 @@ function bindModal(ov){
         m.splitType==="shares" ? "Give at least one person a share." : "Pick at least one person to split with.";
       const id = m.id || uid();
       const inputs = {}; Object.entries(m.inputs).forEach(([k,v])=>{ if(v!==""&&v!==false&&v!=null) inputs[k]=v; });
+      const base = toBase(total, entryCur(m, g.currency), g.currency);
+      const baseSplits = base===total ? comp.splits : allocate(base, comp.splits);
       const ok = await write(() => S.store.saveExpense(g.id, {
-        id, kind:"expense", desc:m.desc.trim(), amount:total, date:m.date||todayISO(), category:m.category,
-        paidBy:m.paidBy, splitType:m.splitType, inputs, splits:comp.splits, notes:(m.notes||"").trim(),
-        createdAt: m.createdAt || Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id))
+        id, kind:"expense", desc:m.desc.trim(), amount:base, date:m.date||todayISO(), category:m.category,
+        paidBy:m.paidBy, splitType:m.splitType, inputs, splits:baseSplits, notes:(m.notes||"").trim(),
+        createdAt: m.createdAt || Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id)), ...origTag(m, g.currency, total)
       }), m.id?"Expense updated":"Expense added");
       if(ok) closeModal();
     };
@@ -1062,15 +1138,16 @@ function bindModal(ov){
   }
 
   if(m.type==="settle"){
-    $("#s-amt").oninput = () => { $("#s-calc").innerHTML = calcPreview($("#s-amt").value, g); };
+    $("#s-amt").oninput = () => { $("#s-calc").innerHTML = calcPreview($("#s-amt").value, {currency:entryCur(m,g.currency)}); $("#s-conv").textContent = convNote(m, g.currency, $("#s-amt").value); };
+    ov.querySelectorAll("[data-scur]").forEach(b => b.onclick = () => { m.from=$("#s-from").value; m.to=$("#s-to").value; m.amount=$("#s-amt").value; m.date=$("#s-date").value; m.notes=$("#s-notes").value; m.cur = b.dataset.scur; renderModal(); });
     $("[data-savesettle]").onclick = async () => {
       const from=$("#s-from").value, to=$("#s-to").value, amount=toCents($("#s-amt").value);
       const err=$("#s-err");
       if(from===to) return err.textContent = "Pick two different people.";
       if(!isFinite(amount)) return err.textContent = "The amount isn't a number or sum I can read.";
       if(amount<=0) return err.textContent = "Enter an amount above zero.";
-      const id = m.id || uid();
-      const ok = await write(() => S.store.saveExpense(g.id, {id, kind:"settle", from, to, amount,
+      const id = m.id || uid(), entered = amount, baseAmt = toBase(entered, entryCur(m, g.currency), g.currency);
+      const ok = await write(() => S.store.saveExpense(g.id, {id, kind:"settle", from, to, amount:baseAmt, ...origTag(m, g.currency, entered),
         date:$("#s-date").value||todayISO(), notes:$("#s-notes").value.trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id))}), m.credit?"Credit added":"Payment recorded");
       if(ok) closeModal();
     };
@@ -1089,19 +1166,20 @@ function newExpenseModal(){
 }
 function editExpenseModal(e){
   const g = group();
-  if(e.kind==="settle") return openModal({type:"settle", id:e.id, from:e.from, to:e.to, amount:fromCents(e.amount), date:e.date, notes:e.notes||"", createdAt:e.createdAt});
+  const oc = e.origCurrency && e.origAmount ? {cur:e.origCurrency, amount:fromCents(e.origAmount)} : {cur:g.currency};
+  if(e.kind==="settle") return openModal({type:"settle", id:e.id, from:e.from, to:e.to, amount:fromCents(e.amount), date:e.date, notes:e.notes||"", createdAt:e.createdAt, ...oc});
   let inputs = {...(e.inputs||{})};
   if(isUnsplit(e)){
     inputs = {}; g.members.forEach(p=>inputs[p.id]=true);
     return openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other",
-      paidBy:e.paidBy, splitType:"equal", inputs, notes:e.notes||"", createdAt:e.createdAt, wasUnsplit:true});
+      paidBy:e.paidBy, splitType:"equal", inputs, notes:e.notes||"", createdAt:e.createdAt, wasUnsplit:true, ...oc});
   }
   if(!Object.keys(inputs).length){ // rebuild from splits if needed
     if(e.splitType==="equal") Object.keys(e.splits||{}).forEach(k=>inputs[k]=true);
-    else Object.entries(e.splits||{}).forEach(([k,c])=>inputs[k]=fromCents(c));
+    else { const sp = e.origAmount ? allocate(e.origAmount, e.splits||{}) : (e.splits||{}); Object.entries(sp).forEach(([k,c])=>inputs[k]=fromCents(c)); }
   }
   openModal({type:"expense", id:e.id, desc:e.desc, amount:fromCents(e.amount), date:e.date, category:e.category||"other",
-    paidBy:e.paidBy, splitType:e.splitType||"exact", inputs, notes:e.notes||"", createdAt:e.createdAt});
+    paidBy:e.paidBy, splitType:e.splitType||"exact", inputs, notes:e.notes||"", createdAt:e.createdAt, ...oc});
 }
 
 /* ---------- summary ---------- */
@@ -1110,9 +1188,9 @@ function summaryText(g){
   const real = S.expenses.filter(e=>e.kind!=="settle");
   const total = real.reduce((a,e)=>a+e.amount,0);
   const plan = simplify(bal);
-  const lines = [`${g.name} — shared expenses`, `Total spent: ${money(total,g.currency)} across ${real.length} expenses`, ""];
+  const lines = [`${g.name} — shared expenses`, `Total spent: ${moneyFull(total,g.currency)} across ${real.length} expenses`, ""];
   if(!plan.length) lines.push("Everyone is settled up 🎉");
-  else { lines.push("To settle up:"); plan.forEach(p=>lines.push(`• ${memberName(g,p.from)} pays ${memberName(g,p.to)} ${money(p.amount,g.currency)}`)); }
+  else { lines.push("To settle up:"); plan.forEach(p=>lines.push(`• ${memberName(g,p.from)} pays ${memberName(g,p.to)} ${moneyFull(p.amount,g.currency)}`)); }
   return lines.join("\n");
 }
 
@@ -1734,7 +1812,7 @@ function renderStatements(g){
   const s = buildStatement(g, S.stmt.member), cur = g.currency, M = c => money(c, cur);
   const st = S.stmt;
   const tile = (k,v,cls="") => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}" style="font-size:20px">${v}</div></div>`;
-  const tbl = (head, rows, foot) => `<div class="card tbl-wrap" style="margin-bottom:18px"><table class="bk">
+  const tbl = (head, rows, foot) => `<div class="card tbl-wrap" style="margin-bottom:18px"><table class="bk wide-table">
       <thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${rows.length ? rows.join("") : `<tr><td colspan="${head.length}" class="muted" style="text-align:left">None in this period</td></tr>`}</tbody>
       ${foot ? `<tfoot><tr>${foot.map(f=>`<td>${f}</td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
@@ -1747,7 +1825,7 @@ function renderStatements(g){
         <div class="field"><label>To</label><input class="input" type="date" id="st-to" value="${esc(st.to||"")}"></div>` : ""}
       <div style="display:flex;gap:8px;align-items:flex-end;margin-left:auto">
         ${S.readOnly ? "" : `<button class="btn" data-act="add-credit">＋ Add credit</button>`}
-        <button class="btn primary" data-act="stmt-pdf">⬇ Download PDF</button>
+        ${wideBtn()}<button class="btn primary" data-act="stmt-pdf">⬇ Download PDF</button>
       </div>
     </div>
     ${s.unsplit ? `<div class="warn-banner"><span>⚠️ ${s.unsplit} expense${s.unsplit>1?"s":""} in this period ${s.unsplit>1?"aren't":"isn't"} split yet, so ${s.unsplit>1?"they're":"it's"} not on this statement.</span><button class="btn sm" data-act="show-unsplit">Split ${s.unsplit>1?"them":"it"}</button></div>` : ""}
@@ -2007,7 +2085,7 @@ window.addEventListener("hashchange", () => { const m = modFromHash(); if(m && m
 /* ---------- charts (inline SVG, hover tooltips) ---------- */
 const divsFor = max => { const e = 10**Math.floor(Math.log10(max)), f = Math.round(max/e*10)/10; return (f===2.5||f===5) ? [0,.2,.4,.6,.8,1] : [0,.25,.5,.75,1]; };
 const niceMax = v => { if(v<=0) return 1; const e = 10**Math.floor(Math.log10(v)), f = v/e; return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*e; };
-const short = c => { const v = c/100, a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(a>=1e7?0:1)+"M" : a>=1e3 ? (v/1e3).toFixed(a>=1e4?0:1)+"k" : String(Math.round(v)); };
+const short = c0 => { const c = conv(c0, PC()).c; const v = c/100, a = Math.abs(v); return a>=1e6 ? (v/1e6).toFixed(a>=1e7?0:1)+"M" : a>=1e3 ? (v/1e3).toFixed(a>=1e4?0:1)+"k" : String(Math.round(v)); };
 const topPath = (x,y,w,h,r) => { r = Math.min(r, w/2, h); return h<=0 ? "" : `M${x},${y+h}V${y+r}Q${x},${y} ${x+r},${y}H${x+w-r}Q${x+w},${y} ${x+w},${y+r}V${y+h}Z`; };
 function legend(series){ return series.length<2 ? "" : `<div class="legend">${series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>`; }
 function barChart({labels, series, stacked=false, height=210, highlight=-1, title=""}){
@@ -2125,16 +2203,16 @@ function spRow(x){
   const c = catOf(x), inc = x.type==="income";
   const selMode = S.spSel.on && S.module==="daily-spending", picked = selMode && S.spSel.ids.has(x.id);
   return `<button class="prow${picked?" picked":""}" data-sp="${esc(x.id)}">${selMode ? `<div class="cat">${selBox(picked)}</div>` : `<div class="cat">${c.icon}</div>`}
-    <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}</div></div>
+    <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}${enteredAs(x)}</div></div>
     <div class="amt ${inc?"pos":""}">${inc?"+ ":""}${pm(x.amount)}</div></button>`;
 }
 function spendModal(m){
-  const cats = m.kind==="income" ? INC_CATS : CATEGORIES;
+  const cats = m.kind==="income" ? INC_CATS : CATEGORIES, ec = entryCur(m, PC());
   return `<header><h3>${m.id?"Edit":"Add"} ${m.kind==="income"?"income":"spending"}</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
     <div class="seg"><button type="button" data-kind="expense" class="${m.kind!=="income"?"on":""}">Spending</button><button type="button" data-kind="income" class="${m.kind==="income"?"on":""}">Income</button></div>
     <div class="row2">
-      <div class="field"><label>Amount (${esc(PC())})</label><input class="input amount-in" id="p-amt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(m.amount)}"><div class="calc" id="p-calc">${calcPreview(m.amount,{currency:PC()})}</div></div>
+      <div class="field"><label class="amt-lbl">Amount ${curPick(m, PC(), "pcur")}</label><input class="input amount-in" id="p-amt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(m.amount)}"><div class="calc" id="p-calc">${calcPreview(m.amount,{currency:ec})}</div><div class="s conv" id="p-conv">${convNote(m, PC())}</div></div>
       <div class="field"><label>Date</label><input class="input" id="p-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
     </div>
     <div class="field"><label>Description</label><input class="input" id="p-desc" value="${esc(m.desc)}" placeholder="${m.kind==="income"?"e.g. October salary":"e.g. Lunch, Careem, Carrefour"}"></div>
@@ -2149,14 +2227,15 @@ function spendModal(m){
 function bindSpend(ov, m){
   const $ = s => ov.querySelector(s);
   const sync = () => { m.amount=$("#p-amt").value; m.date=$("#p-date").value; m.desc=$("#p-desc").value; m.notes=$("#p-notes").value; };
-  $("#p-amt").oninput = () => { $("#p-calc").innerHTML = calcPreview($("#p-amt").value, {currency:PC()}); };
+  $("#p-amt").oninput = () => { $("#p-calc").innerHTML = calcPreview($("#p-amt").value, {currency:entryCur(m,PC())}); $("#p-conv").textContent = convNote(m, PC(), $("#p-amt").value); };
+  ov.querySelectorAll("[data-pcur]").forEach(b => b.onclick = () => { sync(); m.cur = b.dataset.pcur; renderModal(); });
   ov.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { sync(); if(m.kind===b.dataset.kind) return; m.kind = b.dataset.kind; m.category = m.kind==="income" ? "salary" : "food"; renderModal(); });
   ov.querySelectorAll("[data-pcat]").forEach(b => b.onclick = () => { m.category = b.dataset.pcat; ov.querySelectorAll("[data-pcat]").forEach(x=>x.classList.toggle("on", x===b)); });
   ov.querySelectorAll("[data-method]").forEach(b => b.onclick = () => { m.method = b.dataset.method; ov.querySelectorAll("[data-method]").forEach(x=>x.classList.toggle("on", x===b)); });
   $("[data-psave]").onclick = async () => {
     sync(); const amt = toCents(m.amount);
     if(!isFinite(amt) || amt<=0) return $("#p-err").textContent = "Enter an amount above zero.";
-    const item = {id:m.id||uid(), type:m.kind==="income"?"income":"expense", date:m.date||todayISO(), desc:m.desc.trim(), amount:amt,
+    const item = {id:m.id||uid(), type:m.kind==="income"?"income":"expense", date:m.date||todayISO(), desc:m.desc.trim(), amount:toBase(amt, entryCur(m,PC()), PC()), ...origTag(m, PC(), amt),
       category:m.category, method:m.method||"", notes:(m.notes||"").trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.spend.find(z=>z.id===m.id))};
     if(await writeP(() => S.pStore.save("spending", item), m.id ? "Saved" : (item.type==="income" ? "Income added" : "Spending added"))){
       closeModal(); if(monthOf(item.date)!==S.spMonth && S.module==="daily-spending"){ S.spMonth = monthOf(item.date); render(); } }
@@ -2166,7 +2245,7 @@ function bindSpend(ov, m){
   if(!m.id) setTimeout(()=>$("#p-amt")?.focus());
 }
 const newSpend = (kind="expense") => openModal({type:"spend", kind, amount:"", date: S.module==="daily-spending" && S.spMonth!==thisMonth() ? `${S.spMonth}-01` : todayISO(), desc:"", category: kind==="income"?"salary":"food", method:"Card", notes:""});
-const editSpend = x => openModal({type:"spend", id:x.id, kind:x.type==="income"?"income":"expense", amount:fromCents(x.amount), date:x.date, desc:x.desc||"", category:x.category, method:x.method||"", notes:x.notes||"", createdAt:x.createdAt});
+const editSpend = x => openModal({type:"spend", id:x.id, kind:x.type==="income"?"income":"expense", ...(x.origCurrency&&x.origAmount ? {cur:x.origCurrency, amount:fromCents(x.origAmount)} : {cur:PC(), amount:fromCents(x.amount)}), date:x.date, desc:x.desc||"", category:x.category, method:x.method||"", notes:x.notes||"", createdAt:x.createdAt});
 
 /* import / export for Daily Spending */
 function planSpendImport(sheets){
@@ -2659,6 +2738,8 @@ const EXTRA_MODALS = {
   "goal": [goalModal, bindGoal], "goalmoney": [goalMoneyModal, bindGoalMoney]
 };
 function personalClick(t){
+  if(curClick(t)) return true;
+  if(t.dataset.act==='toggle-wide'){ toggleWide(); return true; }
   if(selClick(t)) return true;
   if(t.dataset.nav){ go(t.dataset.nav); return true; }
   if(t.dataset.groupNest){ go("split-share"); selectGroup(t.dataset.groupNest); return true; }
@@ -3017,6 +3098,57 @@ function bindBulkCat(ov, m){
 EXTRA_MODALS.bulksplit = [bulkSplitModal, bindBulkSplit];
 EXTRA_MODALS.bulkcat = [bulkCatModal, bindBulkCat];
 
+
+/* ---------- full-width view ---------- */
+const num = c => (c/100).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+S.wide = (() => { try { return localStorage.getItem("cashnest-wide")==="1"; } catch { return false; } })();
+document.body.classList.toggle("wide", S.wide);
+const wideBtn = () => `<button class="btn sm wide-btn" data-act="toggle-wide" title="${S.wide?"Back to normal width":"Use the whole screen so every column fits"}">${S.wide?"⤡ Normal width":"⤢ Full width"}</button>`;
+function toggleWide(){
+  S.wide = !S.wide; document.body.classList.toggle("wide", S.wide);
+  try { localStorage.setItem("cashnest-wide", S.wide?"1":"0"); } catch {}
+  render();
+}
+
+
+/* ---------- currency bar ---------- */
+function contextCur(){ if(S.module==="split-share"){ const g = group(); return g ? g.currency : "AED"; } return (S.settings && S.settings.currency) || "AED"; }
+function headerCur(){ const c = contextCur(); return (FX.view && ["AED","PHP"].includes(c) && ["AED","PHP"].includes(FX.view)) ? FX.view : c; }
+function curBar(){
+  const ctx = contextCur(), shown = headerCur(), switchable = ["AED","PHP"].includes(ctx);
+  const converted = shown !== ctx;
+  return `<div class="curbar">
+    <span class="s">Amounts in</span>
+    ${switchable ? `<div class="seg mini">${["AED","PHP"].map(c=>`<button type="button" data-viewcur="${c}" class="${shown===c?"on":""}">${c}</button>`).join("")}</div>` : `<b>${esc(ctx)}</b>`}
+    ${switchable ? (S.editRate
+      ? `<span class="s">1 AED =</span><input class="input rate-in" id="rate-in" inputmode="decimal" value="${FX.rate}"><span class="s">PHP</span><button class="btn sm primary" data-act="rate-save">Save</button>`
+      : `<span class="s rate">1 AED = ${FX.rate.toLocaleString(undefined,{maximumFractionDigits:4})} PHP${FX.src==="live"&&FX.at?` · live rate, ${new Date(FX.at).toLocaleDateString(undefined,{day:"numeric",month:"short"})}`:""} <button class="linkbtn" data-act="rate-edit">edit</button></span>`) : ""}
+    ${converted ? `<span class="s conv-note">Converted for viewing. Entries are still saved in ${esc(ctx)}.</span>` : ""}
+  </div>`;
+}
+function setRate(r, src){
+  FX.rate = r; FX.src = src; FX.at = Date.now();
+  try { localStorage.setItem("cashnest-rate", JSON.stringify({rate:r, src, at:FX.at})); } catch {}
+}
+async function refreshLiveRate(){
+  if(window.claude) return;                       // the claude.ai page can't reach rate sites
+  if(FX.src==="you") return;                      // keep a rate the person typed in
+  if(FX.at && Date.now()-FX.at < 12*3600e3) return;
+  try { const r = await fetch("https://open.er-api.com/v6/latest/AED"); const j = await r.json();
+        const v = j && j.rates && j.rates.PHP; if(v > 0){ setRate(Math.round(v*10000)/10000, "live"); render(); } } catch {}
+}
+function curClick(t){
+  if(t.dataset.viewcur){ const c = t.dataset.viewcur; FX.view = c===contextCur() ? null : c;
+    try { FX.view ? localStorage.setItem("cashnest-viewcur", FX.view) : localStorage.removeItem("cashnest-viewcur"); } catch {}
+    render(); return true; }
+  if(t.dataset.act==="rate-edit"){ S.editRate = true; render(); setTimeout(()=>{ const i = document.getElementById("rate-in"); if(i){ i.focus(); i.select(); } }); return true; }
+  if(t.dataset.act==="rate-save"){ const v = parseFloat(String(document.getElementById("rate-in")?.value||"").replace(",", "."));
+    if(!(v>0)){ toast("Enter a rate above zero, e.g. 16.7"); return true; }
+    setRate(v, "you"); S.editRate = false; render(); toast(`Rate saved: 1 AED = ${v} PHP`); return true; }
+  return false;
+}
+document.addEventListener("keydown", e => { if(e.target && e.target.id==="rate-in" && e.key==="Enter"){ e.preventDefault(); document.querySelector('[data-act="rate-save"]')?.click(); } });
+
 /* ---------- events ---------- */
 root.addEventListener("click", async e => {
   const row = e.target.closest("tr[data-exp]");
@@ -3036,7 +3168,7 @@ root.addEventListener("click", async e => {
   if(t.dataset.exp){ const x = S.expenses.find(z=>z.id===t.dataset.exp); if(x && !S.readOnly) editExpenseModal(x); return; }
   if(t.dataset.settle!=null && g){
     const p = simplify(computeBalances(g,S.expenses).bal)[+t.dataset.settle]; if(!p) return;
-    return openModal({type:"settle", from:p.from, to:p.to, amount:fromCents(p.amount), date:todayISO(), notes:""});
+    return openModal({type:"settle", from:p.from, to:p.to, amount:fromCents(p.amount), date:todayISO(), notes:"", cur:g.currency});
   }
   switch(t.dataset.act){
     case "new-group": return openModal({type:"group", name:"", currency:"AED", members:[{id:uid(),name:"Me"}]});
@@ -3110,6 +3242,7 @@ async function boot(){
   subscribeGroups();
   subscribePersonal();
   if(S.sb) processPendingJoin();
+  refreshLiveRate();
 }
 boot();
 })();
