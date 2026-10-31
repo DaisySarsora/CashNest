@@ -347,6 +347,13 @@ body.wide table.wide-table td.desc{max-width:240px}
 .tbl-wrap.freeze tfoot td{position:sticky;bottom:0;z-index:2;box-shadow:inset 0 2px 0 var(--line)}
 .tbl-wrap.freeze tfoot td.hl{background:color-mix(in srgb,var(--accent-soft) 85%,var(--panel2))}
 @media (max-width:760px){ .tbl-wrap.freeze{max-height:75vh} }
+
+.badge.sh{background:var(--accent-soft);color:var(--accent)}
+.prow.shared .cat{background:var(--accent-soft)}
+.chk{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.chk input{width:18px;height:18px;accent-color:var(--accent);margin-top:2px;flex:none}
+.shg{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.shg:last-child{border-bottom:0}
 </style>
 </head>
 <body>
@@ -558,6 +565,7 @@ function subscribeGroups(){
     S.groups = list.filter(g=>g && g.name && Array.isArray(g.members)).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
     S.groupsLoaded = true;
     if(S.module==="my-nest") setTimeout(loadGroupSummaries);
+    loadGroupExpensesSoon();
     if(!S.gid || !group()){
       let saved=null; try{ saved = localStorage.getItem("fairshare-gid"); }catch{}
       selectGroup((S.groups.find(g=>g.id===saved) || S.groups[0] || {}).id || null, true);
@@ -573,6 +581,7 @@ function selectGroup(id, silent){
   if(id){
     unsubExp = S.store.subExpenses(id, (list, meta) => {
       S.expenses = list.filter(e=>e && typeof e.amount==="number");
+      S.groupExp[id] = S.expenses; invalidateSpend();
       S.expLoaded = true; render();
     }, onDbError);
   }
@@ -603,7 +612,7 @@ const root = document.getElementById("root");
 
 function render(){
   if(!S.store) return;
-  S._pageRender = true;
+  S._pageRender = true; invalidateSpend();
   try { renderPage(); } finally { S._pageRender = false; }
   if(S.modal && !document.querySelector(".overlay")) renderModal();
 }
@@ -2006,11 +2015,40 @@ const catOf = t => t.type==="income" ? (INC[t.category] || INC.otherinc) : (CAT[
 const pct = (a,b) => b ? Math.round(a/b*100) : 0;
 const getPath = (o, p) => p.split(".").reduce((x,k)=>x==null?undefined:x[k], o);
 function setPath(o, p, v){ const ks = p.split("."); let x = o; ks.slice(0,-1).forEach(k => { if(typeof x[k]!=="object" || x[k]==null) x[k] = {}; x = x[k]; }); x[ks.at(-1)] = v; }
+/* ---------- your share of Split & Share expenses, shown in Daily Spending ---------- */
+S.groupExp = {}; let _allSpend = null, gxTimer = null;
+const invalidateSpend = () => { _allSpend = null; };
+function sharedItems(){
+  const st = S.settings || {}; if(st.sharedAll === false) return [];
+  const hid = st.sharedHidden || {}, off = st.sharedOff || {}, out = [];
+  for(const g of S.groups){
+    if(off[g.id]) continue; const ex = S.groupExp[g.id]; if(!ex || !g.members || !g.members.length) continue;
+    const me = meIn(g);
+    for(const e of ex){
+      if(!e || e.kind==="settle" || isUnsplit(e)) continue;
+      const c = (e.splits||{})[me.id] || 0; if(c <= 0) continue;
+      const key = `${g.id}__${e.id}`; if(hid[key]) continue;
+      out.push({id:"sh:"+key, key, shared:true, gid:g.id, eid:e.id, gname:g.name, type:"expense", date:e.date, desc:e.desc,
+        amount:toBase(c, g.currency, PC()), share:c, total:e.amount, gcur:g.currency, category:e.category||"other",
+        method:"Shared", notes:"", payer:memberName(g, e.paidBy), createdAt:e.createdAt||0});
+    }
+  }
+  return out;
+}
+function allSpend(){ if(!_allSpend) _allSpend = S.spend.concat(sharedItems()); return _allSpend; }
+async function loadGroupExpenses(){
+  if(!S.store || !S.store.getExpenses) return;
+  for(const g of S.groups){ try { S.groupExp[g.id] = await S.store.getExpenses(g.id); } catch {} }
+  invalidateSpend(); if(PERSONAL.has(S.module)) render();
+}
+const loadGroupExpensesSoon = () => { clearTimeout(gxTimer); gxTimer = setTimeout(loadGroupExpenses, 300); };
+const hideShared = keys => { const hid = {...((S.settings||{}).sharedHidden||{})}; keys.forEach(k => hid[k] = 1); return saveSetting("sharedHidden", hid); };
+
 function monthTotals(ym){
-  let spent = 0, income = 0; const byCat = {}, list = [];
-  for(const t of S.spend){ if(monthOf(t.date)!==ym) continue; list.push(t);
-    if(t.type==="income") income += t.amount; else { spent += t.amount; const c = t.category||"other"; byCat[c] = (byCat[c]||0) + t.amount; } }
-  return {spent, income, byCat, list};
+  let spent = 0, income = 0, shared = 0; const byCat = {}, list = [];
+  for(const t of allSpend()){ if(monthOf(t.date)!==ym) continue; list.push(t);
+    if(t.type==="income") income += t.amount; else { spent += t.amount; if(t.shared) shared += t.amount; const c = t.category||"other"; byCat[c] = (byCat[c]||0) + t.amount; } }
+  return {spent, income, shared, byCat, list};
 }
 function avgMonthlySpend(n = 3){
   const cm = thisMonth(); let tot = 0, cnt = 0;
@@ -2086,6 +2124,7 @@ function go(mod){
   try { if(location.hash !== "#"+mod) history.replaceState(null, "", "#"+mod); } catch { try { location.hash = mod; } catch {} }
   try { localStorage.setItem("cashnest-module", mod); } catch {}
   if(mod==="my-nest") loadGroupSummaries();
+  if(PERSONAL.has(mod)) loadGroupExpensesSoon();
   render(); window.scrollTo({top:0});
 }
 window.addEventListener("hashchange", () => { const m = modFromHash(); if(m && m!==S.module) go(m); });
@@ -2174,16 +2213,16 @@ function renderSpending(){
   const days = ym===thisMonth() ? Number(todayISO().slice(8)) : daysIn(ym);
   const q = S.spQ.trim().toLowerCase();
   const list = t.list
-    .filter(x => !S.spCat || (S.spCat==="income" ? x.type==="income" : x.type!=="income" && x.category===S.spCat))
+    .filter(x => !S.spCat || (S.spCat==="shared" ? x.shared : S.spCat==="mine" ? !x.shared : S.spCat==="income" ? x.type==="income" : x.type!=="income" && x.category===S.spCat))
     .filter(x => !q || (x.desc||"").toLowerCase().includes(q) || (x.notes||"").toLowerCase().includes(q) || catOf(x).label.toLowerCase().includes(q))
     .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0));
   const byDay = {}; list.forEach(x => (byDay[x.date] ||= []).push(x));
   const left = t.income - t.spent;
   return `
     ${modHead("Daily Spending", "Everything you spend and earn, day by day.",
-      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
+      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button><button class="btn sm ${(S.settings||{}).sharedAll===false?"":"on-btn"}" data-act="shared-set" title="Your share of Split & Share expenses">🤝 Shared: ${(S.settings||{}).sharedAll===false?"Off":"On"}</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
     <div class="stats four">
-      ${tile("Spent", pm(t.spent))}
+      ${tile("Spent", pm(t.spent), "", t.shared ? `incl. ${pm(t.shared)} your share of groups` : "")}
       ${tile("Income", pm(t.income), "pos")}
       ${tile(left>=0?"Left over":"Overspent", pm(Math.abs(left)), left>=0?"pos":"neg")}
       ${tile("Daily average", pm(Math.round(t.spent/Math.max(1,days))), "", `over ${days} day${days>1?"s":""}`)}
@@ -2194,6 +2233,8 @@ function renderSpending(){
         <option value="">All categories</option>
         ${CATEGORIES.map(([k,i,l])=>`<option value="${k}" ${S.spCat===k?"selected":""}>${i} ${l}</option>`).join("")}
         <option value="income" ${S.spCat==="income"?"selected":""}>💰 Income</option>
+      <option value="shared" ${S.spCat==="shared"?"selected":""}>🤝 Shared (your share)</option>
+        <option value="mine" ${S.spCat==="mine"?"selected":""}>👤 Only my own</option>
       </select>
     </div>
     ${(S._shown.sp = list.map(x=>x.id), selBar("sp"))}
@@ -2209,6 +2250,12 @@ function renderSpending(){
 }
 function spRow(x){
   const c = catOf(x), inc = x.type==="income";
+  if(x.shared){
+    const selMode = S.spSel.on && S.module==="daily-spending", picked = selMode && S.spSel.ids.has(x.id);
+    return `<button class="prow shared${picked?" picked":""}" data-sp="${esc(x.id)}">${selMode ? `<div class="cat">${selBox(picked)}</div>` : `<div class="cat">${c.icon}</div>`}
+      <div><div class="t">${esc(x.desc || c.label)} <span class="badge sh">🤝 ${esc(x.gname)}</span></div><div class="s">Your share · ${esc(x.payer)} paid ${money(x.total, x.gcur)} · ${esc(c.label)}</div></div>
+      <div class="amt">${pm(x.amount)}</div></button>`;
+  }
   const selMode = S.spSel.on && S.module==="daily-spending", picked = selMode && S.spSel.ids.has(x.id);
   return `<button class="prow${picked?" picked":""}" data-sp="${esc(x.id)}">${selMode ? `<div class="cat">${selBox(picked)}</div>` : `<div class="cat">${c.icon}</div>`}
     <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}${enteredAs(x)}</div></div>
@@ -2352,11 +2399,11 @@ function spTemplate(){
 }
 function spExport(){
   const H = v => ({v, s:3});
-  const tx = [...S.spend].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const tx = [...allSpend()].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   const months = [...new Set(tx.map(t=>monthOf(t.date)))].sort();
   return saveFile(`CashNest spending ${todayISO()}.xlsx`, XL.write([
     {name:"Transactions", widths:[12,10,32,18,10,14,30], rows:[["Date","Type","Description","Category","Method","Amount","Notes"].map(H),
-      ...tx.map(t=>[{v:isoToSerial(t.date),s:1}, t.type==="income"?"Income":"Spending", t.desc||"", catOf(t).label, t.method||"", {v:t.amount/100,s:2}, t.notes||""])]},
+      ...tx.map(t=>[{v:isoToSerial(t.date),s:1}, t.type==="income"?"Income":t.shared?"Shared":"Spending", t.desc||"", catOf(t).label, t.shared?`Shared · ${t.gname}`:(t.method||""), {v:t.amount/100,s:2}, t.notes||""])]},
     {name:"Monthly summary", widths:[16,14,14,14], rows:[["Month","Income","Spent","Left over"].map(H),
       ...months.map(ym=>{ const s = monthTotals(ym); return [monthName(ym), {v:s.income/100,s:2}, {v:s.spent/100,s:2}, {v:(s.income-s.spent)/100,s:4}]; })]}
   ]), "Excel");
@@ -2696,7 +2743,7 @@ function renderNest(){
   const ym = thisMonth(), t = monthTotals(ym), lim = (S.settings.budget||{}).limits || {}, totalBudget = Object.values(lim).reduce((a,v)=>a+(v||0),0);
   const h = new Date().getHours(), greet = h<12 ? "Good morning" : h<17 ? "Good afternoon" : "Good evening";
   const gSaved = S.goals.reduce((a,g)=>a+(g.saved||0),0), gTarget = S.goals.reduce((a,g)=>a+(g.target||0),0);
-  const recent = [...S.spend].sort((a,b)=>(b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0)).slice(0,5);
+  const recent = [...allSpend()].sort((a,b)=>(b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0)).slice(0,5);
   const bcats = CATEGORIES.filter(([k])=>lim[k]>0).map(([k,i,l])=>({k,i,l,lim:lim[k],sp:t.byCat[k]||0})).sort((a,b)=>b.sp/b.lim - a.sp/a.lim).slice(0,5);
   const P = futurePlan();
   const months = Array.from({length:6}, (_,i)=>addMonths(ym, i-5));
@@ -2752,7 +2799,9 @@ function personalClick(t){
   if(t.dataset.nav){ go(t.dataset.nav); return true; }
   if(t.dataset.groupNest){ go("split-share"); selectGroup(t.dataset.groupNest); return true; }
   if(t.dataset.mnav){ if(t.dataset.mnav==='sp'){ S.spSel.ids.clear(); } const key = {sp:"spMonth", bud:"budMonth", in:"inMonth"}[t.dataset.mnav]; S[key] = addMonths(S[key], +t.dataset.d); if(S[key] > thisMonth()) S[key] = thisMonth(); render(); return true; }
-  if(t.dataset.sp){ const x = S.spend.find(z=>z.id===t.dataset.sp); if(x) editSpend(x); return true; }
+  if(t.dataset.sp){
+    if(t.dataset.sp.startsWith("sh:")){ const x = allSpend().find(z=>z.id===t.dataset.sp); if(x) openModal({type:"sharedinfo", item:x}); return true; }
+    const x = S.spend.find(z=>z.id===t.dataset.sp); if(x) editSpend(x); return true; }
   if(t.dataset.goalEdit){ const g = S.goals.find(z=>z.id===t.dataset.goalEdit); if(g) openModal({type:"goal", id:g.id, name:g.name, emoji:g.emoji||"🐷", target:fromCents(g.target||0), date:g.date||"", history:g.history||[]}); return true; }
   if(t.dataset.goalMoney){ openModal({type:"goalmoney", gid:t.dataset.goalMoney, dir:"add"}); return true; }
   if(t.dataset.efm){ saveSetting("future.efMonths", +t.dataset.efm); return true; }
@@ -2941,7 +2990,7 @@ function selBar(kind){
     <span style="flex:1"></span>
     ${kind==="g" && !S.readOnly ? `<button class="btn sm primary" data-act="bulk-split" ${n?"":"disabled"}>✂️ Split selected</button>` : ""}
     <button class="btn sm" data-act="bulk-cat-${kind}" ${n?"":"disabled"}>🏷 Set category</button>
-    <button class="btn sm danger-solid" data-seldel="${kind}" ${n?"":"disabled"}>🗑 Delete selected${n?` (${n})`:""}</button>
+    <button class="btn sm danger-solid" data-seldel="${kind}" ${n?"":"disabled"}>🗑 ${kind==="sp" && [...st.ids].some(id=>id.startsWith("sh:")) ? "Delete / hide" : "Delete"} selected${n?` (${n})`:""}</button>
     <button class="btn sm" data-seldone="${kind}">Done</button></div>`;
 }
 function importsOf(list){
@@ -2976,6 +3025,13 @@ function bindImports(ov, m){
   });
 }
 async function bulkDelete(kind, ids, progress){
+  if(kind==="sp" && ids.some(id => id.startsWith("sh:"))){
+    const sh = ids.filter(id => id.startsWith("sh:")), own = ids.filter(id => !id.startsWith("sh:"));
+    const keys = sh.map(id => id.slice(3)); sh.forEach(id => S.spSel.ids.delete(id));
+    await hideShared(keys);
+    if(own.length) return bulkDelete(kind, own, progress);
+    toast(`Hidden ${keys.length} shared item${keys.length>1?"s":""} from Daily Spending`); render(); return true;
+  }
   const n = ids.length; if(!n) return true;
   const g = group(), msg = `Deleted ${n} item${n>1?"s":""}`;
   const run = async () => { for(let i=0;i<n;i++){ progress && progress(i+1);
@@ -3007,6 +3063,7 @@ function selClick(t){
     case "bulk-cat-g": if(!selectedExpenses().length){ toast("Select at least one expense (payments don't have a category)."); return true; } openModal({type:"bulkcat", kind:"g"}); return true;
     case "bulk-cat-sp": openModal({type:"bulkcat", kind:"sp"}); return true;
     case "imports-sp": openModal({type:"imports", kind:"sp"}); return true;
+    case "shared-set": openModal({type:"sharedset"}); return true;
   }
   return false;
 }
@@ -3083,7 +3140,7 @@ function bulkCatModal(m){
   const skipped = (isG ? S.sel.ids.size : S.spSel.ids.size) - target.length;
   return `<header><h3>Set category for ${target.length} item${target.length===1?"":"s"}</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
-    ${skipped ? `<div class="s">${skipped} selected item${skipped>1?"s":""} will be left as ${skipped>1?"they are":"it is"} (${isG?"payments don't have a category":"income and spending use different categories"}).</div>` : ""}
+    ${skipped ? `<div class="s">${skipped} selected item${skipped>1?"s":""} will be left as ${skipped>1?"they are":"it is"} (${isG?"payments don't have a category":"shared items keep their group's category, and income uses its own categories"}).</div>` : ""}
     <div class="cat-pick big-pick">${cats.map(([k,i,l])=>`<button type="button" data-bcat="${k}">${i} ${l}</button>`).join("")}</div>
     <div class="err" id="bc-err"></div>
   </div>
@@ -3156,6 +3213,51 @@ function curClick(t){
   return false;
 }
 document.addEventListener("keydown", e => { if(e.target && e.target.id==="rate-in" && e.key==="Enter"){ e.preventDefault(); document.querySelector('[data-act="rate-save"]')?.click(); } });
+
+
+/* ---------- shared-expense modals ---------- */
+function sharedInfoModal(m){
+  const x = m.item, c = catOf(x);
+  return `<header><h3>${c.icon} ${esc(x.desc || c.label)}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="card" style="padding:12px 14px;box-shadow:none">
+      <div class="dl"><span>Group</span><b>🤝 ${esc(x.gname)}</b></div>
+      <div class="dl"><span>Date</span><b>${fmtDay(x.date)}</b></div>
+      <div class="dl"><span>${esc(x.payer)} paid</span><b>${moneyFull(x.total, x.gcur)}</b></div>
+      <div class="dl total"><span>Your share</span><b>${moneyFull(x.share, x.gcur)}${x.gcur!==PC() ? ` <span class="s">≈ ${moneyFull(x.amount, PC())}</span>` : ""}</b></div>
+    </div>
+    <div class="s">This comes from Split & Share, so it's counted in your Daily Spending, budget and insights. To change the amount or split, edit it in the group.
+      If you already recorded this purchase yourself (e.g. from a bank import), hide this copy so it isn't counted twice.</div>
+  </div>
+  <footer><button class="btn danger ghost" data-shhide>Hide from Daily Spending</button>
+    <div style="display:flex;gap:8px"><button class="btn" data-close>Close</button><button class="btn primary" data-shopen>Open in Split & Share</button></div></footer>`;
+}
+function bindSharedInfo(ov, m){
+  ov.querySelector("[data-shhide]").onclick = async () => { await hideShared([m.item.key]); toast("Hidden from Daily Spending"); closeModal(); };
+  ov.querySelector("[data-shopen]").onclick = () => { closeModal(); go("split-share"); selectGroup(m.item.gid); };
+}
+function sharedSetModal(){
+  const st = S.settings || {}, on = st.sharedAll !== false, off = st.sharedOff || {}, hidCount = Object.keys(st.sharedHidden||{}).length;
+  return `<header><h3>🤝 Shared expenses in Daily Spending</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <label class="chk"><input type="checkbox" id="sh-all" ${on?"checked":""}> <span><b>Show my share of group expenses</b><div class="s">Your share of each split expense in Split & Share is added to Daily Spending, My Budget, Money Insights and My Nest.</div></span></label>
+    ${S.groups.length ? `<div class="field"><label>Groups to include</label><div class="card" style="box-shadow:none">${S.groups.map(g => `<div class="shg">
+        <label class="chk" style="flex:1"><input type="checkbox" data-shg="${esc(g.id)}" ${off[g.id]?"":"checked"} ${on?"":"disabled"}> <b>${esc(g.name)}</b></label>
+        <span class="s">You are</span><select class="input" data-setting="meIn.${g.id}" data-kind="text" style="width:auto;padding:4px 8px">${g.members.map(p=>`<option value="${esc(p.id)}" ${p.id===meIn(g).id?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
+      </div>`).join("")}</div></div>` : `<div class="s">You don't have any Split & Share groups yet.</div>`}
+    <div class="dl"><span>Hidden shared items: <b>${hidCount}</b></span>${hidCount?`<button class="btn sm" data-shrestore>Show them again</button>`:""}</div>
+    <div class="s">Tip: if you import your bank statement into Daily Spending, the full amount you paid for a group expense is already there. Then either hide the shared copy, or set the bank item to just your share.</div>
+  </div>
+  <footer><span></span><button class="btn primary" data-close>Done</button></footer>`;
+}
+function bindSharedSet(ov){
+  ov.querySelector("#sh-all").onchange = e => { saveSetting("sharedAll", e.target.checked); setTimeout(renderModal, 30); };
+  ov.querySelectorAll("[data-shg]").forEach(cb => cb.onchange = () => { const off = {...((S.settings||{}).sharedOff||{})}; if(cb.checked) delete off[cb.dataset.shg]; else off[cb.dataset.shg] = true; saveSetting("sharedOff", off); });
+  ov.querySelectorAll("[data-setting]").forEach(sel => sel.onchange = () => saveSetting(sel.dataset.setting, sel.value));
+  const r = ov.querySelector("[data-shrestore]"); if(r) r.onclick = () => { saveSetting("sharedHidden", {}); toast("Hidden items are back"); setTimeout(renderModal, 30); };
+}
+EXTRA_MODALS.sharedinfo = [sharedInfoModal, bindSharedInfo];
+EXTRA_MODALS.sharedset = [sharedSetModal, bindSharedSet];
 
 /* ---------- events ---------- */
 root.addEventListener("click", async e => {
