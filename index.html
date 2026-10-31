@@ -339,6 +339,14 @@ body.wide table.wide-table td.desc{max-width:240px}
 .curpick button{border:0;background:none;padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600;color:var(--muted)}
 .curpick button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
 .conv{margin-top:2px;color:var(--accent)}
+
+/* frozen header + totals row: the table scrolls inside its own box */
+.tbl-wrap.freeze{max-height:calc(100vh - 110px);overflow:auto;overscroll-behavior:contain}
+.tbl-wrap.freeze thead th{position:sticky;top:0;z-index:3;background:var(--panel2);box-shadow:inset 0 -1px 0 var(--line)}
+.tbl-wrap.freeze thead th.hl{background:color-mix(in srgb,var(--accent-soft) 85%,var(--panel2))}
+.tbl-wrap.freeze tfoot td{position:sticky;bottom:0;z-index:2;box-shadow:inset 0 2px 0 var(--line)}
+.tbl-wrap.freeze tfoot td.hl{background:color-mix(in srgb,var(--accent-soft) 85%,var(--panel2))}
+@media (max-width:760px){ .tbl-wrap.freeze{max-height:75vh} }
 </style>
 </head>
 <body>
@@ -784,7 +792,7 @@ function renderBreakdown(g, bal, paid, share){
       <span style="display:flex;align-items:center;gap:10px">${fm ? "" : `<span class="s hide-sm">Click a person above to see just their expenses</span>`}${wideBtn()}</span>
     </div>
     ${detail}
-    <div class="card tbl-wrap" style="margin-bottom:24px">
+    <div class="card tbl-wrap freeze" style="margin-bottom:24px">
       ${!real.length ? `<div class="empty" style="padding:28px">${fm?`No expenses charged to ${esc(fm.name)} yet.`:"No expenses yet."}</div>` : `
       <table class="bk wide-table">
         <thead><tr><th>Date</th><th>Expense</th><th>Paid by</th><th>Total</th>
@@ -1812,7 +1820,7 @@ function renderStatements(g){
   const s = buildStatement(g, S.stmt.member), cur = g.currency, M = c => money(c, cur);
   const st = S.stmt;
   const tile = (k,v,cls="") => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}" style="font-size:20px">${v}</div></div>`;
-  const tbl = (head, rows, foot) => `<div class="card tbl-wrap" style="margin-bottom:18px"><table class="bk wide-table">
+  const tbl = (head, rows, foot) => `<div class="card tbl-wrap freeze" style="margin-bottom:18px"><table class="bk wide-table">
       <thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${rows.length ? rows.join("") : `<tr><td colspan="${head.length}" class="muted" style="text-align:left">None in this period</td></tr>`}</tbody>
       ${foot ? `<tfoot><tr>${foot.map(f=>`<td>${f}</td>`).join("")}</tr></tfoot>` : ""}</table></div>`;
