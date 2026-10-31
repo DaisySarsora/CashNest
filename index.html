@@ -402,6 +402,11 @@ table.cf-table tr.cf-run td{font-weight:800;font-size:14px;background:var(--acce
 table.cf-table tr.cf-run td.stick{background:var(--accent-soft)}
 table.cf-table td.est{color:var(--muted);font-style:italic}
 .est-tag{font-size:9.5px;margin-left:4px;padding:1px 4px;border-radius:4px;background:var(--panel2);font-style:normal;color:var(--muted)}
+
+.cf-inc{border:0;background:none;padding:2px 4px;margin:-2px -4px;border-radius:6px;font:inherit;color:inherit;cursor:pointer;white-space:nowrap}
+.cf-inc:hover{background:var(--accent-soft);outline:1px dashed var(--accent)}
+.est-tag.ed{background:var(--accent-soft);color:var(--accent)}
+table.cf-table tr.cf-budget td{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -2507,7 +2512,7 @@ function renderBudget(){
   return `
     ${modHead("My Budget", "Set a monthly limit per category and see how you're tracking.", monthNav("bud", ym))}
     <div class="stats four">
-      <div class="stat"><div class="k">Planned monthly income</div><input class="input money-in" data-setting="budget.income" data-kind="money" value="${plannedIncome?fromCents(plannedIncome):""}" placeholder="e.g. 15000"><div class="note">Actual this month: ${pm(t.income)}</div></div>
+      <div class="stat"><div class="k">Planned monthly income <span title="Also used as expected income in My Future → Monthly cash flow">↔</span></div><input class="input money-in" data-setting="budget.income" data-kind="money" value="${plannedIncome?fromCents(plannedIncome):""}" placeholder="e.g. 15000"><div class="note">Actual this month: ${pm(t.income)}</div></div>
       ${tile("Total budget", pm(totalBudget), "", plannedIncome ? (plannedIncome-totalBudget>=0 ? `${pm(plannedIncome-totalBudget)} not assigned yet` : `<span class="neg">${pm(totalBudget-plannedIncome)} more than income</span>`) : "")}
       ${tile("Spent", pm(t.spent), "", totalBudget?`${pct(t.spent,totalBudget)}% of budget`:"")}
       ${tile(remaining>=0?"Remaining":"Over budget", pm(Math.abs(remaining)), remaining>=0?"pos":"neg", isCur && remaining>0 && daysLeft>0 ? `≈ ${pm(Math.floor(remaining/daysLeft))} a day for ${daysLeft} day${daysLeft>1?"s":""}` : "")}
@@ -2517,6 +2522,7 @@ function renderBudget(){
       <h3 class="sec" style="margin:0">Categories</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn sm" data-act="bud-suggest" title="Sets each limit to your average spending over the last 3 months">✨ Suggest from last 3 months</button>
+        <button class="btn sm" data-act="go-cashflow" title="Your budget is used as planned spending there">📅 See in cash flow</button>
         ${unused.length ? `<select class="input" id="bud-add" style="width:auto;padding:6px 10px;font-size:13px"><option value="">＋ Add a category…</option>${unused.map(([k,i,l])=>`<option value="${k}">${i} ${l}</option>`).join("")}</select>` : ""}
       </div>
     </div>
@@ -2916,6 +2922,7 @@ function personalClick(t){
     case "goal-add": openModal({type:"goal", name:"", emoji:"🐷", target:"", date:"", saved:""}); return true;
     case "new-group-nest": go("split-share"); openModal({type:"group", name:"", currency:PC(), members:[{id:uid(),name:"Me"}]}); return true;
     case "in-pdf": insightsPdf(); return true;
+    case "go-cashflow": S.futTab = "cash"; try { localStorage.setItem("cashnest-futtab","cash"); } catch {} go("my-future"); return true;
     case "invite": if(group()) openModal({type:"invite"}); return true;
     case "signout": S.sb && S.sb.auth.signOut().then(()=>location.reload()); return true;
     case "in-xlsx": insightsXlsx(); return true;
@@ -3727,8 +3734,9 @@ S.futTab = (() => { try { return localStorage.getItem("cashnest-futtab") || "pla
 const OTHER = "\u0000other";
 function cfSettings(){
   const cf = S.settings.cf || {}, cm = thisMonth();
+  const bud = (S.settings.budget||{}).income;
   return {from: cf.from || addMonths(cm,-2), to: cf.to || addMonths(cm,9), opening: cf.opening || 0,
-    income: cf.income != null ? cf.income : ((S.settings.budget||{}).income || 0), useExpected: cf.useExpected !== false};
+    income: bud != null && bud !== 0 ? bud : (cf.income || 0), useExpected: cf.useExpected !== false, useBudget: cf.useBudget !== false};
 }
 /* the instalment a loan schedules for month m (in your currency), or 0 */
 function scheduledIn(l, m){
@@ -3746,8 +3754,10 @@ function cashFlow(){
   const N = months.length, z = () => months.map(() => 0), idx = new Map(months.map((m,i)=>[m,i]));
   // income
   const incRec = z(); S.spend.forEach(x => { if(x.type!=="income" || x.loanId) return; const i = idx.get(monthOf(x.date)); if(i!=null) incRec[i] += x.amount; });
-  const incEst = months.map((m,i) => !incRec[i] && C.useExpected && C.income > 0);
-  const income = months.map((m,i) => incEst[i] ? C.income : incRec[i]);
+  const ov = (S.settings.cf||{}).incomeByMonth || {};
+  const incOv = months.map((m,i) => ov[m] && (!incRec[i] || ov[m].force) ? ov[m] : null);
+  const incEst = months.map((m,i) => !incOv[i] && !incRec[i] && C.useExpected && C.income > 0);
+  const income = months.map((m,i) => incOv[i] ? incOv[i].amount : incEst[i] ? C.income : incRec[i]);
   const owedRows = S.loans.filter(l => l.dir==="owed").map(l => ({label:`${l.name}${l.purpose?` · ${l.purpose}`:""}`, vals: months.map(m => scheduledIn(l, m))})).filter(r => r.vals.some(v=>v));
   const owedTotal = months.map((m,i) => owedRows.reduce((a,r)=>a+r.vals[i],0));
   const incomeTotal = months.map((m,i) => income[i] + owedTotal[i]);
@@ -3774,14 +3784,24 @@ function cashFlow(){
     const key = (l.bank||"").trim() || l.name;
     bank(key).items.push({label: l.card ? `💳 ${l.purpose||"Easy Cash"} · ${l.name}` : `🏦 ${l.purpose||"Loan"}${l.bank && l.bank!==l.name ? ` · ${l.name}` : ""}`, vals});
   });
+  // planned spending from My Budget: full limits in future months, what's left of each limit this month
+  const BL = (S.settings.budget||{}).limits || {}, budRows = [];
+  if(C.useBudget){
+    const spentNow = monthTotals(cm).byCat;
+    Object.entries(BL).filter(([k,v]) => v > 0 && k !== "loans").forEach(([k,v]) => {
+      const vals = months.map(m => m > cm ? v : m===cm ? Math.max(0, v - (spentNow[k]||0)) : 0);
+      if(vals.some(x=>x)) budRows.push({label:`${(CAT[k]||CAT.other).icon} ${(CAT[k]||CAT.other).label}`, vals, cat:k});
+    });
+    if(budRows.length){ const b = bank("\u0001budget"); b.budget = true; budRows.forEach(r => b.items.push({label:r.label, vals:r.vals})); }
+  }
   const list = [...banks.values()].map(b => {
     const sub = months.map((m,i) => b.spend[i] + b.group[i] + b.shared[i] + b.items.reduce((a,it)=>a+it.vals[i],0));
     return {...b, sub, total: sub.reduce((a,v)=>a+v,0)};
-  }).filter(b => b.total).sort((a,b) => a.name===OTHER ? 1 : b.name===OTHER ? -1 : b.total - a.total);
+  }).filter(b => b.total).sort((a,b) => (a.budget?2:a.name===OTHER?1:0) - (b.budget?2:b.name===OTHER?1:0) || b.total - a.total);
   const due = months.map((m,i) => list.reduce((a,b)=>a+b.sub[i],0));
   const left = months.map((m,i) => incomeTotal[i] - due[i]);
   let run = C.opening; const running = left.map(v => (run += v));
-  return {C, cm, months, income, incEst, owedRows, incomeTotal, banks:list, due, left, running};
+  return {C, cm, months, income, incEst, incOv, incRec, owedRows, incomeTotal, banks:list, due, left, running};
 }
 function renderCashFlow(){
   const F = cashFlow(), {C, cm, months} = F;
@@ -3791,13 +3811,13 @@ function renderCashFlow(){
   const sec = (label, extra="") => `<tr class="cf-sec"><td class="stick" colspan="1">${label}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
   let body = "";
   body += sec("Income");
-  body += `<tr><td class="stick">Income${C.useExpected && C.income ? ` <span class="s">(est. = expected)</span>` : ""}</td>${months.map((m,i)=>`<td class="${F.incEst[i]?"est":""}">${F.income[i] ? pm(F.income[i]) + (F.incEst[i] ? `<span class="est-tag">est.</span>` : "") : `<span class="muted">—</span>`}</td>`).join("")}</tr>`;
+  body += `<tr><td class="stick">Income <span class="s">(click a month to edit)</span></td>${months.map((m,i)=>`<td class="${F.incEst[i]?"est":""}"><button class="cf-inc" data-cfinc="${m}" title="Edit expected income for ${monthName(m)}">${F.income[i] ? pm(F.income[i]) : `<span class="muted">—</span>`}${F.incOv[i] ? `<span class="est-tag ed">✎</span>` : F.incEst[i] ? `<span class="est-tag">est.</span>` : ""}</button></td>`).join("")}</tr>`;
   F.owedRows.forEach(r => body += `<tr><td class="stick sub">🤲 ${esc(r.label)}</td>${r.vals.map(v=>cell(v)).join("")}</tr>`);
   body += `<tr class="cf-total"><td class="stick">Total income</td>${F.incomeTotal.map(v=>cell(v,"pos")).join("")}</tr>`;
   body += sec("Payables by bank");
   F.banks.forEach(b => {
-    const nm = b.name===OTHER ? "No bank / cash" : b.name;
-    body += `<tr class="cf-bank"><td class="stick">${b.name===OTHER?"👛":"🏦"} ${esc(nm)}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
+    const nm = b.budget ? "Budgeted spending" : b.name===OTHER ? "No bank / cash" : b.name;
+    body += `<tr class="cf-bank${b.budget?" cf-budget":""}"><td class="stick">${b.budget?"🎯":b.name===OTHER?"👛":"🏦"} ${esc(nm)}${b.budget?` <span class="s">(from My Budget · this month: what's left)</span>`:""}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
     if(b.spend.some(v=>v)) body += `<tr><td class="stick sub">${b.name===OTHER ? "Spending" : "Card / account spending"}</td>${b.spend.map(v=>cell(v)).join("")}</tr>`;
     if(b.group.some(v=>v)) body += `<tr><td class="stick sub">🤝 Group expenses you paid</td>${b.group.map(v=>cell(v)).join("")}</tr>`;
     if(b.shared.some(v=>v)) body += `<tr><td class="stick sub">🤝 Your share of group expenses</td>${b.shared.map(v=>cell(v)).join("")}</tr>`;
@@ -3818,8 +3838,9 @@ function renderCashFlow(){
         <span style="flex:1"></span><button class="btn sm" data-act="cf-xlsx">⬇ Excel</button>
       </div>
       <div class="cf-row">
-        <label class="flt"><span>Expected monthly income</span><input class="input" data-setting="cf.income" data-kind="money" value="${C.income?fromCents(C.income):""}" placeholder="e.g. 18000"></label>
+        <label class="flt"><span>Expected monthly income <span class="s">(same as My Budget)</span></span><input class="input" data-setting="budget.income" data-kind="money" value="${C.income?fromCents(C.income):""}" placeholder="e.g. 18000"></label>
         <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-useexp" ${C.useExpected?"checked":""}> <span class="s">Use it for months with no income recorded</span></label>
+        <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-usebud" ${C.useBudget?"checked":""}> <span class="s">Include My Budget for this month's remainder and future months${Object.values((S.settings.budget||{}).limits||{}).some(v=>v>0) ? "" : ` · <button class="linkbtn" data-nav="my-budget">set a budget</button>`}</span></label>
         <label class="flt"><span>Balance at the start of ${monthName(C.from)}</span><input class="input" data-setting="cf.opening" data-kind="money" value="${C.opening?fromCents(C.opening):""}" placeholder="0.00"></label>
       </div>
     </div>
@@ -3837,7 +3858,7 @@ function cfExport(){
   rows.push(["Income", ...F.income.map(M)]);
   F.owedRows.forEach(r => rows.push([`  ${r.label}`, ...r.vals.map(M)]));
   rows.push([{v:"Total income",s:5}, ...F.incomeTotal.map(v=>({v:v/100,s:4}))], []);
-  F.banks.forEach(b => { const nm = b.name===OTHER ? "No bank / cash" : b.name; rows.push([{v:nm,s:5}]);
+  F.banks.forEach(b => { const nm = b.budget ? "Budgeted spending (My Budget)" : b.name===OTHER ? "No bank / cash" : b.name; rows.push([{v:nm,s:5}]);
     if(b.spend.some(v=>v)) rows.push(["  Spending", ...b.spend.map(M)]);
     if(b.group.some(v=>v)) rows.push(["  Group expenses you paid", ...b.group.map(M)]);
     if(b.shared.some(v=>v)) rows.push(["  Your share of group expenses", ...b.shared.map(M)]);
@@ -3846,7 +3867,42 @@ function cfExport(){
   rows.push([], [{v:"Total due",s:5}, ...F.due.map(v=>({v:v/100,s:4}))], [{v:"Left over",s:5}, ...F.left.map(v=>({v:v/100,s:4}))], [{v:"Running balance",s:5}, ...F.running.map(v=>({v:v/100,s:4}))]);
   return saveFile(`CashNest cash flow ${monthName(F.C.from)} - ${monthName(F.C.to)}.xlsx`, XL.write([{name:"Cash flow", rows, widths:[36, ...F.months.map(()=>13)]}]), "Excel");
 }
+function cfIncomeModal(m){
+  const C = cfSettings(), ov = ((S.settings.cf||{}).incomeByMonth||{})[m.ym];
+  const rec = S.spend.filter(x => x.type==="income" && !x.loanId && monthOf(x.date)===m.ym).reduce((a,x)=>a+x.amount,0);
+  return `<header><h3>Income for ${monthName(m.ym)}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    ${rec ? `<div class="notice" style="margin:0">${pm(rec)} income is already recorded in Daily Spending for this month.</div>` : ""}
+    <div class="field"><label>Expected income (${esc(PC())})</label><input class="input amount-in" id="ci-amt" inputmode="decimal" value="${ov ? fromCents(ov.amount) : C.income ? fromCents(C.income) : ""}" placeholder="0.00"><div class="calc" id="ci-calc"></div></div>
+    <div class="seg" style="flex-direction:column;gap:3px">
+      <button type="button" data-ciscope="one" class="${m.scope!=="after"?"on":""}" style="text-align:left;padding:8px 10px">Only ${monthName(m.ym)}</button>
+      <button type="button" data-ciscope="after" class="${m.scope==="after"?"on":""}" style="text-align:left;padding:8px 10px">${monthName(m.ym)} and every month after it in this period</button>
+    </div>
+    ${rec ? `<label class="chk"><input type="checkbox" id="ci-force" ${ov&&ov.force?"checked":""}> <span>Use my amount instead of the recorded ${pm(rec)}</span></label>` : ""}
+    <div class="s">Default for months without an edit: ${C.income ? pm(C.income) : "not set"} (change it in “Expected monthly income”).</div>
+    <div class="err" id="ci-err"></div>
+  </div>
+  <footer>${ov ? `<button class="btn danger ghost" data-cireset>Reset to default</button>` : "<span></span>"}
+    <div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-cisave>Save</button></div></footer>`;
+}
+function bindCfIncome(ov, m){
+  const $ = s => ov.querySelector(s);
+  $("#ci-amt").oninput = () => { $("#ci-calc").innerHTML = calcPreview($("#ci-amt").value, {currency:PC()}); };
+  ov.querySelectorAll("[data-ciscope]").forEach(b => b.onclick = () => { m.scope = b.dataset.ciscope; ov.querySelectorAll("[data-ciscope]").forEach(x=>x.classList.toggle("on", x===b)); });
+  $("[data-cisave]").onclick = () => {
+    const a = toCents($("#ci-amt").value);
+    if(!isFinite(a) || a < 0) return $("#ci-err").textContent = "Enter an amount (0 or more).";
+    const C = cfSettings(), map = {...((S.settings.cf||{}).incomeByMonth||{})}, force = !!$("#ci-force")?.checked;
+    const months = []; if(m.scope==="after"){ for(let x = m.ym; x <= C.to; x = addMonths(x,1)) months.push(x); } else months.push(m.ym);
+    months.forEach(x => map[x] = {amount:a, ...(force && x===m.ym ? {force:true} : {})});
+    saveSetting("cf.incomeByMonth", map); toast(months.length>1 ? `Income set for ${months.length} months` : `Income set for ${monthName(m.ym)}`); closeModal();
+  };
+  const r = $("[data-cireset]"); if(r) r.onclick = () => { const map = {...((S.settings.cf||{}).incomeByMonth||{})}; delete map[m.ym]; saveSetting("cf.incomeByMonth", map); toast("Back to the default"); closeModal(); };
+  setTimeout(() => { const i = $("#ci-amt"); i.focus(); i.select(); });
+}
+EXTRA_MODALS.cfinc = [cfIncomeModal, bindCfIncome];
 function cfClick(t){
+  if(t.dataset.cfinc){ openModal({type:"cfinc", ym:t.dataset.cfinc, scope:"one"}); return true; }
   if(t.dataset.futtab){ S.futTab = t.dataset.futtab; try { localStorage.setItem("cashnest-futtab", S.futTab); } catch {} render(); return true; }
   if(t.dataset.cfp){ const cm = thisMonth(), y = cm.slice(0,4);
     const r = {p36:[addMonths(cm,-3), addMonths(cm,6)], n12:[cm, addMonths(cm,11)], yr:[`${y}-01`, `${y}-12`], l6:[addMonths(cm,-5), cm]}[t.dataset.cfp];
@@ -3861,6 +3917,7 @@ function cfChange(el){
     if(from > to) [from, to] = el.id==="cf-from" ? [from, from] : [to, to];
     saveSetting("cf", {...(S.settings.cf||{}), from, to}); return true; }
   if(el.id==="cf-useexp"){ saveSetting("cf.useExpected", el.checked); return true; }
+  if(el.id==="cf-usebud"){ saveSetting("cf.useBudget", el.checked); return true; }
   return false;
 }
 
