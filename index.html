@@ -418,6 +418,8 @@ table.cf-table tr.cf-budget td{color:var(--accent)}
 .catlist{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;padding-right:4px}
 .catrow{display:flex;gap:8px;align-items:center}
 .catrow .input{padding:7px 10px}
+.ftag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:10px;letter-spacing:.04em;vertical-align:middle}
+.stat .s{margin-top:4px}
 </style>
 </head>
 <body>
@@ -763,6 +765,21 @@ function renderGroup(g){
   const outstanding = Object.values(bal).filter(v=>v>0).reduce((a,v)=>a+v,0);
   const monthKey = todayISO().slice(0,7);
   const thisMonth = real.filter(e=>(e.date||"").slice(0,7)===monthKey).reduce((a,e)=>a+e.amount,0);
+  const F = S.gf, filtered = S.tab==="expenses" && S.expLoaded && (filtersActive() || S.q.trim() || S.catFilter);
+  let tiles;
+  if(filtered){
+    const fl = groupFiltered(g).filter(e=>e.kind!=="settle"), ft = fl.reduce((a,e)=>a+e.amount,0);
+    const fm = fl.filter(e=>(e.date||"").slice(0,7)===monthKey).reduce((a,e)=>a+e.amount,0);
+    const who = F.who || F.paid, tag = `<span class="ftag">filtered</span>`;
+    const share = F.who ? fl.reduce((a,e)=>a+((e.splits||{})[F.who]||0),0) : null;
+    const pb = who ? (bal[who]||0) : null;
+    tiles = `
+      <div class="stat"><div class="k">Total spent ${tag}</div><div class="v">${money(ft,g.currency)}</div><div class="s">${fl.length} expense${fl.length===1?"":"s"} · of ${money(total,g.currency)} overall</div></div>
+      ${share!=null ? `<div class="stat"><div class="k">${esc(memberName(g,F.who))}'s share ${tag}</div><div class="v">${money(share,g.currency)}</div><div class="s">This month: ${money(fl.filter(e=>(e.date||"").slice(0,7)===monthKey).reduce((a,e)=>a+((e.splits||{})[F.who]||0),0),g.currency)}</div></div>`
+        : `<div class="stat"><div class="k">This month ${tag}</div><div class="v">${money(fm,g.currency)}</div><div class="s">of ${money(thisMonth,g.currency)} overall</div></div>`}
+      ${who ? `<div class="stat"><div class="k">${esc(memberName(g,who))}'s balance</div><div class="v ${pb>0?"pos":pb<0?"neg":""}">${pb ? money(Math.abs(pb),g.currency) : "Settled ✓"}</div><div class="s">${pb>0?"is owed overall":pb<0?"owes overall":"nothing owed either way"} · group still to settle ${money(outstanding,g.currency)}</div></div>`
+        : `<div class="stat"><div class="k">Still to settle</div><div class="v ${outstanding?"neg":"pos"}">${outstanding?money(outstanding,g.currency):"All square ✓"}</div><div class="s">whole group</div></div>`}`;
+  }
   return `
     <div class="ghead">
       <div>
@@ -778,10 +795,10 @@ function renderGroup(g){
         <button class="btn sm" data-act="edit-group" ${S.readOnly?"disabled":""}>Edit group</button>
       </div>
     </div>
-    <div class="stats">
+    <div class="stats">${tiles || `
       <div class="stat"><div class="k">Total spent</div><div class="v">${money(total,g.currency)}</div></div>
       <div class="stat"><div class="k">This month</div><div class="v">${money(thisMonth,g.currency)}</div></div>
-      <div class="stat"><div class="k">Still to settle</div><div class="v ${outstanding?"neg":"pos"}">${outstanding?money(outstanding,g.currency):"All square ✓"}</div></div>
+      <div class="stat"><div class="k">Still to settle</div><div class="v ${outstanding?"neg":"pos"}">${outstanding?money(outstanding,g.currency):"All square ✓"}</div></div>`}
     </div>
     <div class="tabs">
       ${[["expenses","Expenses"],["balances","Balances"],["statements","Statements"],["insights","Insights"]].map(([k,l])=>`<button class="tab ${S.tab===k?"active":""}" data-tab="${k}">${l}</button>`).join("")}
@@ -791,15 +808,19 @@ function renderGroup(g){
   `;
 }
 
+function groupFiltered(g){
+  const q = S.q.trim().toLowerCase();
+  return S.expenses
+    .filter(e => !S.catFilter || (S.catFilter==="settle" ? e.kind==="settle" : S.catFilter==="unsplit" ? isUnsplit(e) : e.kind!=="settle" && e.category===S.catFilter))
+    .filter(e => !q || (e.desc||"").toLowerCase().includes(q) || (e.notes||"").toLowerCase().includes(q) ||
+                 memberName(g, e.paidBy||e.from).toLowerCase().includes(q))
+    .filter(e => passesFilters(e));
+}
 function renderExpenses(g){
   if(!S.expenses.length) return `<div class="card empty"><div class="big">💸</div><h3>No expenses yet</h3><p>Add the first one: rent, a dinner, a taxi ride.</p>
     ${S.readOnly?"":`<button class="btn primary" data-act="add-expense">＋ Add expense</button>`}</div>`;
   const q = S.q.trim().toLowerCase();
-  const list = S.expenses
-    .filter(e => !S.catFilter || (S.catFilter==="settle" ? e.kind==="settle" : S.catFilter==="unsplit" ? isUnsplit(e) : e.kind!=="settle" && e.category===S.catFilter))
-    .filter(e => !q || (e.desc||"").toLowerCase().includes(q) || (e.notes||"").toLowerCase().includes(q) ||
-                 memberName(g, e.paidBy||e.from).toLowerCase().includes(q))
-    .filter(e => passesFilters(e))
+  const list = groupFiltered(g)
     .sort((a,b)=> (b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0));
   const F = S.gf, active = filtersActive();
   const sumOf = arr => arr.filter(e=>e.kind!=="settle").reduce((a,e)=>a+e.amount,0);
@@ -3147,6 +3168,7 @@ function selBar(kind){
     <span style="flex:1"></span>
     ${kind==="g" && !S.readOnly ? `<button class="btn sm primary" data-act="bulk-split" ${n?"":"disabled"}>✂️ Split selected</button>` : ""}
     <button class="btn sm" data-act="bulk-cat-${kind}" ${n?"":"disabled"}>🏷 Set category</button>
+    ${kind==="g" && S.readOnly ? "" : `<button class="btn sm" data-act="bulk-bank-${kind}" ${n?"":"disabled"}>🏦 Set bank</button>`}
     <button class="btn sm danger-solid" data-seldel="${kind}" ${n?"":"disabled"}>🗑 ${kind==="sp" && [...st.ids].some(id=>id.startsWith("sh:")) ? "Delete / hide" : "Delete"} selected${n?` (${n})`:""}</button>
     <button class="btn sm" data-seldone="${kind}">Done</button></div>`;
 }
@@ -3219,6 +3241,8 @@ function selClick(t){
       const inputs = {}; g.members.forEach(p=>inputs[p.id]=true); openModal({type:"bulksplit", method:"equal", inputs, paidBy:""}); return true; }
     case "bulk-cat-g": if(!selectedExpenses().length){ toast("Select at least one expense (payments don't have a category)."); return true; } openModal({type:"bulkcat", kind:"g"}); return true;
     case "bulk-cat-sp": openModal({type:"bulkcat", kind:"sp"}); return true;
+    case "bulk-bank-g": if(!selectedExpenses().length){ toast("Select at least one expense (payments don't have a bank)."); return true; } openModal({type:"bulkbank", kind:"g", bank:""}); return true;
+    case "bulk-bank-sp": if(!S.spend.some(x => S.spSel.ids.has(x.id))){ toast("Shared items take their bank from the group expense. Select your own items."); return true; } openModal({type:"bulkbank", kind:"sp", bank:""}); return true;
     case "imports-sp": openModal({type:"imports", kind:"sp"}); return true;
     case "shared-set": openModal({type:"sharedset"}); return true;
   }
@@ -3429,6 +3453,38 @@ function bindBulkCat(ov, m){
 }
 EXTRA_MODALS.bulksplit = [bulkSplitModal, bindBulkSplit];
 EXTRA_MODALS.bulkcat = [bulkCatModal, bindBulkCat];
+const bulkBankPool = isG => isG ? selectedExpenses() : S.spend.filter(x => S.spSel.ids.has(x.id));
+function bulkBankModal(m){
+  const isG = m.kind==="g", pool = bulkBankPool(isG), skipped = (isG ? S.sel.ids.size : S.spSel.ids.size) - pool.length;
+  const banks = allBanks().slice(0, 12);
+  const me = isG ? meIn(group()) : null, notMine = isG && me ? pool.filter(e => e.paidBy !== me.id).length : 0;
+  return `<header><h3>🏦 Set bank for ${pool.length} item${pool.length===1?"":"s"}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    ${skipped ? `<div class="s">${skipped} selected item${skipped>1?"s":""} will be left as ${skipped>1?"they are":"it is"} (${isG?"payments don't have a bank":"shared items take their bank from the group expense"}).</div>` : ""}
+    <div class="field"><label>Paid with bank / card</label><input class="input" id="bb-bank" list="bank-list" value="${esc(m.bank||"")}" placeholder="e.g. Mashreq, ADCB, Emirates NBD">${bankDatalist()}</div>
+    ${banks.length ? `<div class="cat-pick">${banks.map(b=>`<button type="button" data-bbpick="${esc(b)}">🏦 ${esc(b)}</button>`).join("")}</div>` : ""}
+    ${notMine ? `<div class="s" style="margin-top:8px">${notMine} of these were paid by someone else. The bank is saved on them, but only expenses <b>you</b> paid count under your banks in Monthly cash flow.</div>` : ""}
+    <div class="err" id="bb-err"></div>
+  </div>
+  <footer><button class="btn ghost" data-bbclear>Remove bank</button><div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-bbsave>Save</button></div></footer>`;
+}
+function bindBulkBank(ov, m){
+  const $ = s => ov.querySelector(s);
+  ov.querySelectorAll("[data-bbpick]").forEach(b => b.onclick = () => { $("#bb-bank").value = b.dataset.bbpick; });
+  const run = async (bank, btn) => {
+    const isG = m.kind==="g", pool = bulkBankPool(isG); btn.disabled = true; btn.textContent = "Saving…";
+    const job = async () => { for(const x of pool){ const {bank:_b, ...rest} = x; const item = bank ? {...rest, bank} : rest;
+      if(isG) await S.store.saveExpense(group().id, item); else await S.pStore.save("spending", item); } };
+    const msg = bank ? `${pool.length} set to ${bank}` : `Bank removed from ${pool.length}`;
+    const ok = isG ? await write(job, msg) : await writeP(job, msg);
+    if(ok){ (isG ? S.sel : S.spSel).ids.clear(); invalidateSpend(); closeModal(); render(); } else { btn.disabled = false; btn.textContent = "Try again"; }
+  };
+  $("[data-bbsave]").onclick = e => { const v = $("#bb-bank").value.trim(); if(!v) return $("#bb-err").textContent = "Type or pick a bank, or use Remove bank."; run(v, e.currentTarget); };
+  $("[data-bbclear]").onclick = e => run("", e.currentTarget);
+  $("#bb-bank").onkeydown = e => { if(e.key==="Enter"){ e.preventDefault(); $("[data-bbsave]").click(); } };
+  setTimeout(() => $("#bb-bank")?.focus());
+}
+EXTRA_MODALS.bulkbank = [bulkBankModal, bindBulkBank];
 
 
 /* ---------- full-width view ---------- */
