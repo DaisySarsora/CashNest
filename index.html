@@ -370,6 +370,14 @@ body.wide table.wide-table td.desc{max-width:240px}
 .flt .input{padding:7px 10px;font-size:14px}
 .fsum{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;padding:8px 12px;margin-bottom:12px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
 @media (max-width:760px){ .flt{min-width:calc(50% - 6px);flex:1} }
+
+.ccard{border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px;background:var(--panel2)}
+.cchead{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.cchead b{font-size:16px}
+.ccnums{display:flex;gap:18px;align-items:center}
+.ccnums>div{display:flex;flex-direction:column;align-items:flex-end}
+.ccnums b{font-family:"Bricolage Grotesque";font-size:18px}
+.loan.ccplan .gemoji{background:#e8eefc}
 </style>
 </head>
 <body>
@@ -3371,16 +3379,30 @@ function loanTotals(){
     else owed += b; });
   return {owe, owed, net: owed - owe, monthly, debtFree};
 }
-/* months of payments left until the last payment date (this month counts if not paid yet) */
-function firstPayMonth(l){
-  const now = thisMonth(), paidNow = (l.entries||[]).some(e => e.kind==="pay" && !e.opening && monthOf(e.date)===now);
-  let m = paidNow ? addMonths(now, 1) : now;
-  // the first instalment is the month after the loan was taken
-  if(l.start){ const first = addMonths(monthOf(l.start), 1); if(first > m) m = first; }
-  return m;
+/* ---- payment schedule: first payment date → last payment date, one instalment a month ----
+   Instalments paid = everything paid ÷ the monthly amount, so paying early (e.g. paying the 5 Nov instalment in October) counts right away. */
+const dayOf = iso => Number(String(iso||"").slice(8,10)) || 1;
+const dateInMonth = (ym, day) => `${ym}-${String(Math.min(day, daysIn(ym))).padStart(2,"0")}`;
+function firstDueDate(l){
+  if(l.firstDue) return l.firstDue;
+  const day = l.dueDay || (l.start ? dayOf(l.start) : 1);
+  return dateInMonth(l.start ? addMonths(monthOf(l.start), 1) : thisMonth(), day);
 }
+const dueAt = (l, k) => dateInMonth(addMonths(monthOf(firstDueDate(l)), k), l.dueDay || dayOf(firstDueDate(l)));
 function monthsBetween(a, b){ let n = 0, m = a; while(m <= b && n < 1200){ n++; m = addMonths(m, 1); } return n; }
-function paymentsLeft(l){ return l.endDate ? monthsBetween(firstPayMonth(l), monthOf(l.endDate)) : null; }
+function instPaid(l){
+  const pays = (l.entries||[]).filter(e => e.kind==="pay");
+  if(l.monthly > 0) return Math.floor(pays.reduce((a,e)=>a+e.amount,0) / l.monthly + 1e-6);
+  return pays.filter(e => !e.opening).length;
+}
+const scheduleCount = l => l.endDate ? monthsBetween(monthOf(firstDueDate(l)), monthOf(l.endDate)) : null;
+function paymentsLeft(l){ const n = scheduleCount(l); return n==null ? null : Math.max(0, n - instPaid(l)); }
+function nextDue(l){
+  if(!loanBalance(l) || (!l.dueDay && !l.firstDue && !l.endDate)) return null;
+  const k = instPaid(l), n = scheduleCount(l);
+  if(n!=null && k >= n) return null;
+  return dueAt(l, k);
+}
 /* monthly amount that clears balance B in n payments at yearly rate (%) */
 function monthlyFor(B, n, rate){ if(!n || n<1) return 0; const r = (rate||0)/100/12; return Math.ceil(r ? B*r/(1-Math.pow(1+r,-n)) : B/n); }
 
@@ -3397,28 +3419,28 @@ function payoff(l){
   const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
   return {months:n, date:iso, interest: r ? Math.max(0, n*M - B) : 0};
 }
-/* due status for this month */
+/* this month's instalment: due, overdue, or already paid */
 function dueInfo(l){
-  if(l.dir!=="owe" || !l.dueDay || !loanBalance(l)) return null;
-  const t = todayISO(), ym = t.slice(0,7), day = Number(t.slice(8));
-  if(l.endDate && ym > monthOf(l.endDate)) return null;
-  if(l.start && ym <= monthOf(l.start)) return null;   // nothing due in the month the loan was taken
-  const dd = Math.min(l.dueDay, daysIn(ym));
-  const paidThisMonth = (l.entries||[]).some(e => e.kind==="pay" && !e.opening && monthOf(e.date)===ym);
-  const date = `${ym}-${String(dd).padStart(2,"0")}`;
-  return {date, paid:paidThisMonth, overdue: !paidThisMonth && day > dd, daysLeft: dd - day};
+  if(l.dir!=="owe" || !loanBalance(l)) return null;
+  const nd = nextDue(l); if(!nd) return null;
+  const t = todayISO(), ym = t.slice(0,7);
+  if(monthOf(nd) <= ym) return {date:nd, paid:false, overdue: nd < t, daysLeft: Math.round((Date.parse(nd) - Date.parse(t)) / 864e5)};
+  const k = instPaid(l); if(k > 0){ const prev = dueAt(l, k-1); if(monthOf(prev)===ym) return {date:prev, paid:true}; }
+  return null;
 }
 const lm = (c, l) => money(c, l.cur||PC());
 
 function renderLoans(){
   const T = loanTotals();
-  const open = d => S.loans.filter(l => l.dir===d && loanBalance(l) > 0);
+  const open = d => S.loans.filter(l => l.dir===d && !l.card && loanBalance(l) > 0);
+  const cardPlans = S.loans.filter(l => l.card && loanBalance(l) > 0);
+  const cards = [...new Set(cardPlans.map(l=>l.name))];
   const closed = S.loans.filter(l => loanBalance(l) === 0);
   const dues = S.loans.map(l => ({l, d:dueInfo(l)})).filter(x => x.d).sort((a,b)=>a.d.date.localeCompare(b.d.date));
   const df = T.debtFree==="never" ? "Not at this rate" : T.debtFree ? monthName(T.debtFree) : (T.owe ? "Add monthly payments" : "Debt-free ✓");
   return `
     ${modHead("My Loans", "What you owe, and what other people owe you.",
-      `<button class="btn sm" data-act="loan-new-owed">＋ Money owed to me</button><button class="btn sm primary" data-act="loan-new-owe">＋ Loan I owe</button>`)}
+      `<button class="btn sm" data-act="loan-new-owed">＋ Money owed to me</button><button class="btn sm" data-act="loan-new-card">💳 ＋ Credit card plan</button><button class="btn sm primary" data-act="loan-new-owe">＋ Loan I owe</button>`)}
     <div class="stats four">
       ${tile("You owe", pm(T.owe), T.owe?"neg":"", T.monthly ? `${pm(T.monthly)} a month in payments` : "")}
       ${tile("Owed to you", pm(T.owed), T.owed?"pos":"")}
@@ -3427,8 +3449,8 @@ function renderLoans(){
     </div>
     ${dues.length ? `<h3 class="sec">This month's payments</h3><div class="card" style="margin-bottom:20px">${dues.map(({l,d}) => `
       <div class="srow">
-        <span class="cat sm">🏦</span>
-        <div class="grow" style="flex-direction:column;align-items:flex-start;gap:0"><b>${esc(l.name)}</b><span class="s">Due ${fmtDay(d.date)}${l.purpose?` · ${esc(l.purpose)}`:""}</span></div>
+        <span class="cat sm">${l.card?"💳":"🏦"}</span>
+        <div class="grow" style="flex-direction:column;align-items:flex-start;gap:0"><b>${esc(l.card ? `${l.name} · ${l.purpose||"Easy Cash"}` : l.name)}</b><span class="s">Due ${fmtDay(d.date)}${!l.card && l.purpose?` · ${esc(l.purpose)}`:""}</span></div>
         <b style="font-variant-numeric:tabular-nums">${lm(l.monthly||0, l)}</b>
         <span class="st ${d.paid?"ok":d.overdue?"over":"warn"}" style="min-width:92px;text-align:right">${d.paid?"✓ Paid":d.overdue?"✕ Overdue":d.daysLeft===0?"! Due today":`! In ${d.daysLeft} day${d.daysLeft>1?"s":""}`}</span>
         ${d.paid ? "" : `<button class="btn sm primary" data-loan-pay="${esc(l.id)}">Pay</button>`}
@@ -3436,6 +3458,14 @@ function renderLoans(){
     <h3 class="sec">Loans I owe</h3>
     ${open("owe").length ? `<div class="goal-grid">${open("owe").map(loanCard).join("")}</div>`
       : `<div class="card empty" style="padding:24px"><p>No loans you owe. 🎉</p><button class="btn sm" data-act="loan-new-owe">＋ Add a loan, credit card or instalment plan</button></div>`}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px"><h3 class="sec" style="margin:0">💳 Credit cards</h3>${cards.length?`<button class="btn sm" data-act="loan-new-card">＋ Add plan</button>`:""}</div>
+    ${cards.length ? cards.map(c => { const plans = cardPlans.filter(l=>l.name===c);
+        const left = plans.reduce((a,l)=>a+inPC(loanBalance(l), l.cur),0), mon = plans.reduce((a,l)=>a+inPC(l.monthly||0, l.cur),0);
+        const nds = plans.map(nextDue).filter(Boolean).sort(), last = plans.map(l=>l.endDate).filter(Boolean).sort().at(-1);
+        return `<div class="ccard"><div class="cchead"><div><b>💳 ${esc(c)}</b><div class="s">${plans.length} plan${plans.length>1?"s":""}${nds[0]?` · next payment ${fmtDay(nds[0])}`:""}${last?` · all done by ${fmtDay(last)}`:""}</div></div>
+          <div class="ccnums"><div><span class="s">Left to pay</span><b class="neg">${pm(left)}</b></div><div><span class="s">Per month</span><b>${pm(mon)}</b></div><button class="btn sm" data-act="loan-new-card" data-card="${esc(c)}">＋ Plan</button></div></div>
+          <div class="goal-grid">${plans.map(loanCard).join("")}</div></div>`; }).join("")
+      : `<div class="card empty" style="padding:24px"><p>Track Easy Cash, Smart Pay or balance transfer plans on your credit cards.</p><button class="btn sm" data-act="loan-new-card">💳 ＋ Add a credit card plan</button></div>`}
     <h3 class="sec" style="margin-top:24px">Owed to me</h3>
     ${open("owed").length ? `<div class="goal-grid">${open("owed").map(loanCard).join("")}</div>`
       : `<div class="card empty" style="padding:24px"><p>Nobody owes you money right now.</p><button class="btn sm" data-act="loan-new-owed">＋ Record money you lent someone</button></div>`}
@@ -3443,9 +3473,10 @@ function renderLoans(){
     <div class="s" style="margin-top:18px">Your loans are also counted in <b>My Future</b>: what you owe is subtracted from your savings, and money owed to you is added. You can turn that off there.</div>`;
 }
 function loanCard(l){
-  const owe = l.dir==="owe", bal = loanBalance(l), tot = loanTotal(l), paid = loanPaid(l), p = payoff(l), pc = pct(paid, tot);
-  return `<div class="card goal loan ${owe?"owe":"owed"}">
-    <div class="ghd"><span class="gemoji">${owe?"🏦":"🤲"}</span><div style="flex:1;min-width:0"><b>${esc(l.name)}</b><div class="s">${esc(l.purpose || (owe?"Loan":"Money lent"))}${l.cur && l.cur!==PC()?` · ${esc(l.cur)}`:""}</div></div>
+  const owe = l.dir==="owe", bal = loanBalance(l), tot = loanTotal(l), paid = loanPaid(l), p = payoff(l), pc = pct(paid, tot), nd = nextDue(l);
+  const title = l.card ? (l.purpose || "Easy Cash") : l.name, sub = l.card ? `💳 ${l.name}` : (l.purpose || (owe?"Loan":"Money lent"));
+  return `<div class="card goal loan ${owe?"owe":"owed"}${l.card?" ccplan":""}">
+    <div class="ghd"><span class="gemoji">${l.card?"💳":owe?"🏦":"🤲"}</span><div style="flex:1;min-width:0"><b>${esc(title)}</b><div class="s">${esc(sub)}${l.cur && l.cur!==PC()?` · ${esc(l.cur)}`:""}</div></div>
       <button class="btn sm ghost" data-loan-pdf="${esc(l.id)}" title="PDF statement">📄</button><button class="btn sm ghost" data-loan-edit="${esc(l.id)}" aria-label="Edit">✎</button></div>
     <div class="gnum"><b class="${bal? (owe?"neg":"pos") : ""}">${lm(bal, l)}</b><span class="s"> ${owe?"left to pay":"still owed to you"}</span></div>
     ${progress(pc, bal===0?"ok":"")}
@@ -3453,7 +3484,8 @@ function loanCard(l){
     <div class="s gnote">${bal===0 ? (owe ? "🎉 Paid off" : "🎉 Fully repaid")
       : p.scheduled && p.months < 1 ? `<span class="neg"><b>Last ${owe?"payment":"repayment"} was due in ${monthName(p.date)}</b>. ${lm(bal, l)} is still ${owe?"unpaid":"owed to you"}.</span>${owe ? "" : ""}<br><span class="s">Change the last date in ✎ Edit if the plan changed.</span>`
       : l.monthly && p.scheduled ? `${lm(l.monthly, l)} a month${l.rate?` · ${l.rate}% a year`:""}${l.dueDay?` · due on the ${ordinal(l.dueDay)}`:""}<br>
-          <b>${p.months} payment${p.months===1?"":"s"} left</b>, last one in <b>${monthName(p.date)}</b> · ${lm(p.total, l)} still to pay
+          <b>${p.months} payment${p.months===1?"":"s"} left</b> of ${scheduleCount(l)}, last one <b>${fmtDay(l.endDate)}</b> · ${lm(p.total, l)} still to pay
+          ${nd ? `<br>Next payment: <b>${fmtDay(nd)}</b>${nd < todayISO() ? ` <span class="neg">(overdue)</span>` : ""}` : ""}
           ${Math.abs(p.total - bal) > Math.max(100, bal*0.01) ? `<br><span class="s">${p.total > bal ? `That's ${lm(p.total-bal, l)} more than the balance (interest or fees).` : `<span class="neg">That's ${lm(bal-p.total, l)} less than the balance. Check the monthly amount or last date.</span>`}</span>` : ""}`
       : l.monthly ? `${lm(l.monthly, l)} a month${l.rate?` · ${l.rate}% a year`:""}${l.dueDay?` · due on the ${ordinal(l.dueDay)}`:""}<br>${p.never ? `<span class="neg">At this payment the interest grows faster than you pay it off.</span>` : p.date ? `${owe?"Paid off":"Repaid"} by <b>${monthName(p.date)}</b> (${p.months} month${p.months>1?"s":""})${p.interest?` · ≈ ${lm(Math.round(p.interest), l)} interest`:""}` : ""}`
       : `${l.rate?`${l.rate}% a year · `:""}Add a monthly amount to see when it'll be ${owe?"paid off":"repaid"}.`}</div>
@@ -3464,27 +3496,29 @@ const ordinal = n => n + (["th","st","nd","rd"][((n%100)-20)%10] || ["th","st","
 
 /* ---------- loan modals ---------- */
 function loanModal(m){
-  const owe = m.dir==="owe", l = S.loans.find(x=>x.id===m.id);
+  const owe = m.dir==="owe", l = S.loans.find(x=>x.id===m.id), cc = !!m.isCard;
+  const cards = [...new Set(S.loans.filter(x=>x.card).map(x=>x.name))];
   const curSel = `<span class="curpick">${["AED","PHP"].map(c=>`<button type="button" data-lcur="${c}" class="${m.cur===c?"on":""}">${c}</button>`).join("")}</span>`;
-  return `<header><h3>${m.id ? "Edit" : "Add"} ${owe ? "a loan I owe" : "money owed to me"}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  return `<header><h3>${m.id ? "Edit" : "Add"} ${cc ? "a credit card plan" : owe ? "a loan I owe" : "money owed to me"}</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
     <div class="row2">
-      <div class="field"><label>${owe ? "Who you owe (lender)" : "Who owes you"}</label><input class="input" id="l-name" value="${esc(m.name)}" placeholder="${owe ? "e.g. Emirates NBD, Mum, Credit card" : "e.g. Kristel"}"></div>
-      <div class="field"><label>What it's for (optional)</label><input class="input" id="l-purpose" value="${esc(m.purpose)}" placeholder="${owe ? "e.g. Car loan" : "e.g. Lent for rent deposit"}"></div>
+      <div class="field"><label>${cc ? "Credit card" : owe ? "Who you owe (lender)" : "Who owes you"}</label><input class="input" id="l-name" value="${esc(m.name)}" ${cc?'list="cc-list"':""} placeholder="${cc ? "e.g. Mashreq Platinum, ADCB Talabat" : owe ? "e.g. Emirates NBD, Mum" : "e.g. Kristel"}">${cc ? `<datalist id="cc-list">${cards.map(c=>`<option value="${esc(c)}">`).join("")}</datalist>` : ""}</div>
+      <div class="field"><label>${cc ? "Plan" : "What it's for (optional)"}</label><input class="input" id="l-purpose" value="${esc(m.purpose)}" placeholder="${cc ? "e.g. Easy Cash, Smart Pay, Balance transfer" : owe ? "e.g. Car loan" : "e.g. Lent for rent deposit"}"></div>
     </div>
     <div class="row2">
-      <div class="field"><label class="amt-lbl">${owe ? "Amount borrowed" : "Amount lent"} ${curSel}</label><input class="input" id="l-principal" inputmode="decimal" value="${esc(m.principal)}" placeholder="0.00"></div>
+      <div class="field"><label class="amt-lbl">${cc ? "Total to repay" : owe ? "Amount borrowed" : "Amount lent"} ${curSel}</label><input class="input" id="l-principal" inputmode="decimal" value="${esc(m.principal)}" placeholder="0.00"></div>
       <div class="field"><label>Date</label><input class="input" id="l-start" type="date" value="${esc(m.start)}"></div>
     </div>
-    ${m.id ? "" : `<div class="field"><label>Already ${owe ? "paid back" : "received"} before today (optional)</label><input class="input" id="l-already" inputmode="decimal" value="${esc(m.already||"")}" placeholder="0.00"><div class="s" style="margin-top:3px">Enter it if the loan started earlier, so the balance is right.</div></div>`}
+    ${m.id ? "" : `<div class="field"><label>Already ${owe ? "paid" : "received"} (optional)</label><input class="input" id="l-already" inputmode="decimal" value="${esc(m.already||"")}" placeholder="0.00"><div class="s" style="margin-top:3px">Include instalments you've already paid, even early ones (e.g. you already paid the 5 Nov instalment). Each monthly amount counts as one instalment.</div></div>`}
     <div class="row2">
-      <div class="field"><label>${owe ? "Monthly payment" : "Expected monthly repayment"} (optional)</label><input class="input" id="l-monthly" inputmode="decimal" value="${esc(m.monthly)}" placeholder="0.00"></div>
+      <div class="field"><label>${cc ? "Monthly instalment" : owe ? "Monthly payment" : "Expected monthly repayment"} (optional)</label><input class="input" id="l-monthly" inputmode="decimal" value="${esc(m.monthly)}" placeholder="0.00"></div>
       <div class="field"><label>Interest per year (optional)</label><div class="sfx"><input class="input" id="l-rate" inputmode="decimal" value="${esc(m.rate)}" placeholder="0"><span>%</span></div></div>
     </div>
     <div class="row2">
-      ${owe ? `<div class="field"><label>Payment due on day (optional)</label><input class="input" id="l-due" type="number" min="1" max="31" value="${esc(m.dueDay)}" placeholder="e.g. 15"></div>` : `<div></div>`}
-      <div class="field"><label>Last ${owe?"payment":"repayment"} on (optional)</label><input class="input" id="l-end" type="date" value="${esc(m.endDate||"")}"></div>
+      <div class="field"><label>First ${owe?"payment":"repayment"} date</label><input class="input" id="l-first" type="date" value="${esc(m.firstDue||"")}"><div class="s" style="margin-top:3px">Empty = the month after the loan date</div></div>
+      <div class="field"><label>Last ${owe?"payment":"repayment"} date</label><input class="input" id="l-end" type="date" value="${esc(m.endDate||"")}"></div>
     </div>
+    ${owe ? `<div class="field"><label>Due on day of the month (optional)</label><input class="input" id="l-due" type="number" min="1" max="31" value="${esc(m.dueDay)}" placeholder="taken from the first payment date" style="max-width:260px"></div>` : ""}
     <div class="s conv" id="l-hint">${loanHint(m)}</div>
     <div class="field"><label>Notes (optional)</label><input class="input" id="l-notes" value="${esc(m.notes)}"></div>
     ${l && (l.entries||[]).length ? `<div class="field"><label>History</label><div class="card hist">${l.entries.map((e,i)=>({e,i})).sort((a,b)=>b.e.date.localeCompare(a.e.date) || b.i-a.i).map(x=>x.e).map(e => `
@@ -3502,34 +3536,48 @@ function loanDraftBalance(m){
   if(prev){ const changed = principal - (prev.principal||0); return Math.max(0, loanBalance(prev) + changed); }
   return Math.max(0, principal - (isFinite(already)?already:0));
 }
+function loanDraft(m){
+  const prev = S.loans.find(x=>x.id===m.id);
+  const monthly = m.monthly ? toCents(m.monthly) : 0, already = m.already ? toCents(m.already) : 0;
+  const entries = prev ? (prev.entries||[]) : (already>0 && isFinite(already) ? [{kind:"pay", amount:already, opening:true, date:m.start||todayISO()}] : []);
+  const due = m.dueDay ? parseInt(m.dueDay,10) : (m.firstDue ? dayOf(m.firstDue) : 0);
+  return {start:m.start, firstDue:m.firstDue||null, endDate:m.endDate||null, dueDay:due||null, monthly:isFinite(monthly)?monthly:0, entries};
+}
 function loanHint(m){
-  const B = loanDraftBalance(m); if(B==null || !B) return "";
-  const monthly = m.monthly ? toCents(m.monthly) : 0, rate = m.rate ? parseFloat(m.rate)||0 : 0, cur = m.cur||PC();
-  const draft = {start:m.start, endDate:m.endDate, entries:(S.loans.find(x=>x.id===m.id)||{}).entries||[]};
+  const B = loanDraftBalance(m); if(B==null) return "";
+  const rate = m.rate ? parseFloat(m.rate)||0 : 0, cur = m.cur||PC(), d = loanDraft(m);
+  if(!B) return "Nothing left to pay.";
   if(m.endDate){
-    const n = monthsBetween(firstPayMonth(draft), monthOf(m.endDate));
-    if(n < 1) return `The last ${m.dir==="owe"?"payment":"repayment"} date has passed, so the ${moneyFull(B, cur)} balance shows as overdue.`;
-    if(!monthly || !isFinite(monthly)) return `≈ ${moneyFull(monthlyFor(B, n, rate), cur)} a month for ${n} month${n>1?"s":""} (leave Monthly empty and I'll use this)`;
-    const total = monthly*n;
-    return `${n} payment${n>1?"s":""} × ${moneyFull(monthly, cur)} = ${moneyFull(total, cur)} · balance ${moneyFull(B, cur)}${Math.abs(total-B) > Math.max(100,B*0.01) ? (total>B ? ` (${moneyFull(total-B, cur)} extra: interest or fees)` : ` (${moneyFull(B-total, cur)} short)`) : " ✓"}`;
+    const total = scheduleCount(d); if(total < 1) return "The last payment date should be after the first payment date.";
+    const fd = firstDueDate(d);
+    if(!d.monthly){
+      const left = total - d.entries.filter(e=>e.kind==="pay"&&!e.opening).length;
+      return `${total} instalments from ${fmtDay(fd)} to ${fmtDay(m.endDate)} · ≈ ${moneyFull(monthlyFor(B, Math.max(1,left), rate), cur)} a month for the ${left} left (leave Monthly empty and I'll use this)`;
+    }
+    const paidN = instPaid(d), left = Math.max(0, total - paidN), need = d.monthly*left, nd = left ? dueAt(d, paidN) : null;
+    let s = `${total} instalments (${fmtDay(fd)} → ${fmtDay(m.endDate)})${paidN?` · ${paidN} paid`:""} · <b>${left} left</b> × ${moneyFull(d.monthly, cur)} = ${moneyFull(need, cur)}`;
+    if(nd) s += ` · next due ${fmtDay(nd)}`;
+    s += Math.abs(need-B) > Math.max(100, B*0.01) ? (need>B ? ` · ${moneyFull(need-B, cur)} more than the balance (interest or fees)` : ` · <span class="neg">${moneyFull(B-need, cur)} short of the balance</span>`) : " ✓";
+    return s;
   }
-  if(monthly && isFinite(monthly)){ const p = payoff({principal:B, entries:[], monthly, rate}); return p.never ? "At this monthly amount the interest grows faster than the payments." : p.date ? `At this amount it'll be ${m.dir==="owe"?"paid off":"repaid"} by ${monthName(p.date)} (${p.months} months)` : ""; }
+  if(d.monthly){ const p = payoff({principal:B, entries:[], monthly:d.monthly, rate}); return p.never ? "At this monthly amount the interest grows faster than the payments." : p.date ? `At this amount it'll be ${m.dir==="owe"?"paid off":"repaid"} by ${monthName(p.date)} (${p.months} months)` : ""; }
   return "";
 }
 function bindLoan(ov, m){
   const $ = s => ov.querySelector(s);
-  const sync = () => { ["name","purpose","principal","start","monthly","rate","notes","end"].forEach(k => m[k==="end"?"endDate":k] = $("#l-"+k).value);
+  const sync = () => { ["name","purpose","principal","start","monthly","rate","notes","end","first"].forEach(k => m[k==="end"?"endDate":k==="first"?"firstDue":k] = $("#l-"+k).value);
     if($("#l-due")) m.dueDay = $("#l-due").value; if($("#l-already")) m.already = $("#l-already").value; };
-  ["principal","already","monthly","rate","end","start"].forEach(k => { const el = $("#l-"+k); if(el) el.addEventListener("input", () => { sync(); $("#l-hint").textContent = loanHint(m); }); });
+  ["principal","already","monthly","rate","end","start","first","due"].forEach(k => { const el = $("#l-"+k); if(el) el.addEventListener("input", () => { sync(); $("#l-hint").innerHTML = loanHint(m); }); });
   ov.querySelectorAll("[data-lcur]").forEach(b => b.onclick = () => { sync(); m.cur = b.dataset.lcur; renderModal(); });
   $("[data-lsave]").onclick = async () => {
     sync(); const err = $("#l-err");
     const principal = toCents(m.principal), monthly = m.monthly ? toCents(m.monthly) : 0, already = m.already ? toCents(m.already) : 0;
     const rate = m.rate ? parseFloat(m.rate) : 0, due = m.dueDay ? parseInt(m.dueDay,10) : 0;
     let monthlyFinal = monthly;
-    if(m.endDate){
-      const n = monthsBetween(firstPayMonth({start:m.start, entries:(S.loans.find(x=>x.id===m.id)||{}).entries||[]}), monthOf(m.endDate));
-      if(!monthlyFinal && n >= 1){ const B = loanDraftBalance(m); monthlyFinal = monthlyFor(B||0, n, isFinite(rate)?rate:0); }
+    if(m.firstDue && m.endDate && m.endDate < m.firstDue) return err.textContent = "The last payment date should be after the first payment date.";
+    if(m.endDate && !monthlyFinal){
+      const d = loanDraft(m), left = scheduleCount(d) - d.entries.filter(e=>e.kind==="pay"&&!e.opening).length;
+      if(left >= 1) monthlyFinal = monthlyFor(loanDraftBalance(m)||0, left, isFinite(rate)?rate:0);
     }
     if(!m.name.trim()) return err.textContent = m.dir==="owe" ? "Who do you owe?" : "Who owes you?";
     if(!isFinite(principal) || principal<=0) return err.textContent = "Enter the amount above zero.";
@@ -3539,7 +3587,7 @@ function bindLoan(ov, m){
     if(due && (due<1 || due>31)) return err.textContent = "The due day should be between 1 and 31.";
     const prev = S.loans.find(x=>x.id===m.id);
     const entries = prev ? prev.entries||[] : (already ? [{id:uid(), date:m.start||todayISO(), kind:"pay", amount:already, note:"Paid before CashNest", opening:true}] : []);
-    const item = {...(prev||{}), id:m.id||uid(), dir:m.dir, name:m.name.trim(), purpose:m.purpose.trim(), cur:m.cur, principal, rate, monthly:monthlyFinal, dueDay:due||null, endDate:m.endDate||null,
+    const item = {...(prev||{}), id:m.id||uid(), dir:m.dir, name:m.name.trim(), purpose:m.purpose.trim(), cur:m.cur, principal, rate, monthly:monthlyFinal, dueDay:(due || (m.firstDue ? dayOf(m.firstDue) : 0)) || null, endDate:m.endDate||null, firstDue:m.firstDue||null, card:!!m.isCard,
       start:m.start||todayISO(), notes:(m.notes||"").trim(), entries, createdAt:prev?.createdAt||Date.now()};
     if(await writeP(() => S.pStore.save("loans", item), prev ? "Loan updated" : "Loan added")) closeModal();
   };
@@ -3622,8 +3670,9 @@ EXTRA_MODALS.loan = [loanModal, bindLoan];
 EXTRA_MODALS.loanpay = [loanPayModal, bindLoanPay];
 function loanClick(t){
   const a = t.dataset.act;
-  if(a==="loan-new-owe" || a==="loan-new-owed"){ openModal({type:"loan", dir:a==="loan-new-owe"?"owe":"owed", name:"", purpose:"", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", notes:""}); return true; }
-  if(t.dataset.loanEdit){ const l = S.loans.find(x=>x.id===t.dataset.loanEdit); if(l) openModal({type:"loan", id:l.id, dir:l.dir, name:l.name, purpose:l.purpose||"", cur:l.cur||PC(), principal:fromCents(l.principal), start:l.start||"", monthly:l.monthly?fromCents(l.monthly):"", rate:l.rate||"", dueDay:l.dueDay||"", endDate:l.endDate||"", notes:l.notes||""}); return true; }
+  if(a==="loan-new-card"){ openModal({type:"loan", dir:"owe", isCard:true, name:t.dataset.card||"", purpose:"Easy Cash", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", firstDue:"", notes:""}); return true; }
+  if(a==="loan-new-owe" || a==="loan-new-owed"){ openModal({type:"loan", dir:a==="loan-new-owe"?"owe":"owed", name:"", purpose:"", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", firstDue:"", notes:""}); return true; }
+  if(t.dataset.loanEdit){ const l = S.loans.find(x=>x.id===t.dataset.loanEdit); if(l) openModal({type:"loan", id:l.id, dir:l.dir, name:l.name, purpose:l.purpose||"", cur:l.cur||PC(), principal:fromCents(l.principal), start:l.start||"", monthly:l.monthly?fromCents(l.monthly):"", rate:l.rate||"", dueDay:l.dueDay||"", endDate:l.endDate||"", firstDue:l.firstDue||"", isCard:!!l.card, notes:l.notes||""}); return true; }
   if(t.dataset.loanPay){ const l = S.loans.find(x=>x.id===t.dataset.loanPay); if(l) openModal({type:"loanpay", lid:l.id, kind:"pay", amount: l.monthly && loanBalance(l) ? fromCents(Math.min(l.monthly, loanBalance(l))) : "", date:todayISO(), note:"", toSpend: l.dir==="owe"}); return true; }
   if(t.dataset.loanPdf){ const l = S.loans.find(x=>x.id===t.dataset.loanPdf); if(l) loanPdf(l); return true; }
   return false;
