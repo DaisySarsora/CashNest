@@ -2255,15 +2255,26 @@ function renderSpending(){
     .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0));
   const byDay = {}; list.forEach(x => (byDay[x.date] ||= []).push(x));
   const left = t.income - t.spent;
+  const filtered = !!(S.spCat || q);
+  const fSpent = list.filter(x=>x.type!=="income").reduce((a,x)=>a+x.amount,0), fIncome = list.filter(x=>x.type==="income").reduce((a,x)=>a+x.amount,0);
+  const fShared = list.filter(x=>x.shared).reduce((a,x)=>a+x.amount,0);
+  const fLabel = S.spCat==="shared" ? "🤝 Shared" : S.spCat==="mine" ? "👤 My own" : S.spCat==="income" ? "💰 Income" : S.spCat ? `${(CAT[S.spCat]||CAT.other).icon} ${(CAT[S.spCat]||CAT.other).label}` : "";
+  const fName = [fLabel, q ? `“${S.spQ.trim()}”` : ""].filter(Boolean).join(" · ");
   return `
     ${modHead("Daily Spending", "Everything you spend and earn, day by day.",
       `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button><button class="btn sm ${(S.settings||{}).sharedAll===false?"":"on-btn"}" data-act="shared-set" title="Your share of Split & Share expenses">🤝 Shared: ${(S.settings||{}).sharedAll===false?"Off":"On"}</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
+    ${filtered ? `<div class="fsum"><span>Totals for <b>${esc(fName)}</b> in ${monthName(ym)} · ${list.length} item${list.length===1?"":"s"}</span><button class="btn sm" data-act="sp-clear-filter">✕ Clear filter</button></div>
     <div class="stats four">
+      ${tile(`Spent · ${esc(fLabel || "matching")}`, pm(fSpent), "", t.spent ? `${pct(fSpent, t.spent)}% of ${pm(t.spent)} spent this month` : "")}
+      ${fIncome ? tile("Income", pm(fIncome), "pos") : tile("Your share of groups", pm(fShared), "", fShared && fSpent ? `${pct(fShared, fSpent)}% of this` : "")}
+      ${tile("Items", String(list.length), "", fSpent && list.length ? `average ${pm(Math.round(fSpent/Math.max(1,list.filter(x=>x.type!=="income").length)))} each` : "")}
+      ${tile("Daily average", pm(Math.round(fSpent/Math.max(1,days))), "", `over ${days} day${days>1?"s":""}`)}
+    </div>` : `<div class="stats four">
       ${tile("Spent", pm(t.spent), "", t.shared ? `incl. ${pm(t.shared)} your share of groups` : "")}
       ${tile("Income", pm(t.income), "pos")}
       ${tile(left>=0?"Left over":"Overspent", pm(Math.abs(left)), left>=0?"pos":"neg")}
       ${tile("Daily average", pm(Math.round(t.spent/Math.max(1,days))), "", `over ${days} day${days>1?"s":""}`)}
-    </div>
+    </div>`}
     <div class="toolbar">
       <input class="input" id="sp-search" placeholder="Search…" value="${esc(S.spQ)}" style="flex:1;min-width:160px">
       <select class="input" id="sp-cat" style="width:auto">
@@ -2859,6 +2870,7 @@ function personalClick(t){
   switch(t.dataset.act){
     case "sp-add": newSpend("expense"); return true;
     case "sp-add-inc": newSpend("income"); return true;
+    case "sp-clear-filter": S.spCat = ""; S.spQ = ""; render(); return true;
     case "sp-export": spExport(); return true;
     case "sp-import": chooseSheets((sheets, name) => openModal({type:"spimport", fileName:name, plan:planSpendImport(sheets)})); return true;
     case "goal-add": openModal({type:"goal", name:"", emoji:"🐷", target:"", date:"", saved:""}); return true;
@@ -3363,7 +3375,8 @@ function loanTotals(){
 function firstPayMonth(l){
   const now = thisMonth(), paidNow = (l.entries||[]).some(e => e.kind==="pay" && !e.opening && monthOf(e.date)===now);
   let m = paidNow ? addMonths(now, 1) : now;
-  if(l.start && monthOf(l.start) > m) m = monthOf(l.start);
+  // the first instalment is the month after the loan was taken
+  if(l.start){ const first = addMonths(monthOf(l.start), 1); if(first > m) m = first; }
   return m;
 }
 function monthsBetween(a, b){ let n = 0, m = a; while(m <= b && n < 1200){ n++; m = addMonths(m, 1); } return n; }
@@ -3389,7 +3402,7 @@ function dueInfo(l){
   if(l.dir!=="owe" || !l.dueDay || !loanBalance(l)) return null;
   const t = todayISO(), ym = t.slice(0,7), day = Number(t.slice(8));
   if(l.endDate && ym > monthOf(l.endDate)) return null;
-  if(l.start && ym < monthOf(l.start)) return null;
+  if(l.start && ym <= monthOf(l.start)) return null;   // nothing due in the month the loan was taken
   const dd = Math.min(l.dueDay, daysIn(ym));
   const paidThisMonth = (l.entries||[]).some(e => e.kind==="pay" && !e.opening && monthOf(e.date)===ym);
   const date = `${ym}-${String(dd).padStart(2,"0")}`;
