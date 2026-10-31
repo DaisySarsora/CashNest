@@ -294,6 +294,18 @@ tr:last-child td{border-bottom:0}
 .youare{display:flex;align-items:center;gap:8px;margin-top:8px}
 .youare .input{width:auto;padding:4px 8px;font-size:13px}
 .mem .btn.used{opacity:.4}
+
+.selbox{width:22px;height:22px;border-radius:6px;border:2px solid var(--muted);display:inline-grid;place-items:center;font-size:14px;font-weight:800;color:var(--accent-ink);background:var(--panel)}
+.selbox.on{background:var(--accent);border-color:var(--accent)}
+.erow.picked,.prow.picked{background:var(--accent-soft)}
+.selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;margin-bottom:12px;border-radius:12px;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.btn.danger-solid{background:var(--neg);border-color:var(--neg);color:#fff;font-weight:600}
+.btn.danger-solid:disabled{opacity:.45}
+.btn.on-btn{background:var(--accent-soft);border-color:var(--accent);font-weight:600}
+.improw{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.improw:last-child{border-bottom:0}
+.impinfo{min-width:0}
+.impinfo b{word-break:break-all}
 </style>
 </head>
 <body>
@@ -476,7 +488,7 @@ function subscribeGroups(){
 }
 function selectGroup(id, silent){
   if(id === S.gid && unsubExp) return;
-  S.gid = id; S.expenses = []; S.expLoaded = false; S.q=""; S.catFilter=""; S.focus=null; S.stmt.member=null;
+  S.gid = id; S.expenses = []; S.expLoaded = false; if(S.sel){ S.sel.on = false; S.sel.ids.clear(); } S.q=""; S.catFilter=""; S.focus=null; S.stmt.member=null;
   try{ if(id) localStorage.setItem("fairshare-gid", id); }catch{}
   if(unsubExp){ unsubExp(); unsubExp = null; }
   if(id){
@@ -617,6 +629,8 @@ function renderExpenses(g){
     ${unsplitBanner()}
     <div class="toolbar">
       <input class="input" id="search" placeholder="Search expenses…" value="${esc(S.q)}" style="flex:1;min-width:180px">
+      ${S.readOnly ? "" : `<button class="btn sm ${S.sel.on?"on-btn":""}" data-act="sel-g">☑ Select</button>`}
+      <button class="btn sm" data-act="imports-g">📂 Imported files</button>
       <select class="input" id="catf" style="width:auto">
         <option value="">All categories</option>
         ${CATEGORIES.map(([k,i,l])=>`<option value="${k}" ${S.catFilter===k?"selected":""}>${i} ${l}</option>`).join("")}
@@ -624,6 +638,7 @@ function renderExpenses(g){
         <option value="unsplit" ${S.catFilter==="unsplit"?"selected":""}>⚠️ Needs splitting</option>
       </select>
     </div>
+    ${(S._shown.g = list.map(e=>e.id), selBar("g"))}
     ${!list.length ? `<div class="card empty"><p>No expenses match.</p></div>` :
       Object.entries(months).map(([k, items]) => `
       <div class="month">${esc(monthLabel(k))}</div>
@@ -643,19 +658,20 @@ function unsplitBanner(){
 
 function expenseRow(g, e){
   const d = new Date((e.date||todayISO())+"T00:00:00");
-  const dateHtml = `<div class="date">${d.toLocaleDateString(undefined,{month:"short"})}<b>${d.getDate()}</b></div>`;
+  const picked = S.sel.on && S.sel.ids.has(e.id), pk = picked ? " picked" : "";
+  const dateHtml = S.sel.on ? `<div class="date">${selBox(picked)}</div>` : `<div class="date">${d.toLocaleDateString(undefined,{month:"short"})}<b>${d.getDate()}</b></div>`;
   if(e.kind === "settle"){
-    return `<button class="erow settle-row" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">🤝</div>
+    return `<button class="erow settle-row${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">🤝</div>
       <div><div class="t">${esc(memberName(g,e.from))} paid ${esc(memberName(g,e.to))}</div><div class="s">Payment${e.notes?" · "+esc(e.notes):""}</div></div>
       <div class="amt pos">${money(e.amount,g.currency)}</div></button>`;
   }
   const c = CAT[e.category] || CAT.other;
-  if(isUnsplit(e)) return `<button class="erow unsplit" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
+  if(isUnsplit(e)) return `<button class="erow unsplit${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
     <div><div class="t">${esc(e.desc)} <span class="badge">Needs splitting</span></div><div class="s">${esc(memberName(g,e.paidBy))} paid · click to choose who shares it</div></div>
     <div class="amt">${money(e.amount,g.currency)}<div class="s">${c.label}</div></div></button>`;
   const n = Object.keys(e.splits||{}).length;
   const method = {equal:"split equally",exact:"exact amounts",percent:"by percentage",shares:"by shares"}[e.splitType] || "split";
-  return `<button class="erow" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
+  return `<button class="erow${pk}" data-exp="${esc(e.id)}">${dateHtml}<div class="cat">${c.icon}</div>
     <div><div class="t">${esc(e.desc)}</div><div class="s">${esc(memberName(g,e.paidBy))} paid · ${n} ${n===1?"person":"people"}, ${method}</div></div>
     <div class="amt">${money(e.amount,g.currency)}<div class="s">${c.label}</div></div></button>`;
 }
@@ -1036,7 +1052,7 @@ function bindModal(ov){
       const ok = await write(() => S.store.saveExpense(g.id, {
         id, kind:"expense", desc:m.desc.trim(), amount:total, date:m.date||todayISO(), category:m.category,
         paidBy:m.paidBy, splitType:m.splitType, inputs, splits:comp.splits, notes:(m.notes||"").trim(),
-        createdAt: m.createdAt || Date.now()
+        createdAt: m.createdAt || Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id))
       }), m.id?"Expense updated":"Expense added");
       if(ok) closeModal();
     };
@@ -1053,7 +1069,7 @@ function bindModal(ov){
       if(amount<=0) return err.textContent = "Enter an amount above zero.";
       const id = m.id || uid();
       const ok = await write(() => S.store.saveExpense(g.id, {id, kind:"settle", from, to, amount,
-        date:$("#s-date").value||todayISO(), notes:$("#s-notes").value.trim(), createdAt:m.createdAt||Date.now()}), m.credit?"Credit added":"Payment recorded");
+        date:$("#s-date").value||todayISO(), notes:$("#s-notes").value.trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.expenses.find(x=>x.id===m.id))}), m.credit?"Credit added":"Payment recorded");
       if(ok) closeModal();
     };
   }
@@ -1595,7 +1611,8 @@ function importModal(m){
 async function runImport(btn){
   const g = group(), p = S.modal.plan;
   btn.disabled = true;
-  const items = [...p.expenses, ...p.payments];
+  const tag = {importId:uid(), importFile:S.modal.fileName || "Imported file", importedAt:Date.now()};
+  const items = [...p.expenses, ...p.payments].map(x => { const prev = S.expenses.find(e=>e.id===x.id); return prev ? {...x, ...importTagsOf(prev)} : {...x, ...tag}; });
   const ok = await write(async () => {
     if(p.newMembers.length) await S.store.saveGroup({...g, members:[...g.members, ...p.newMembers]});
     for(let i=0;i<items.length;i++){ btn.textContent = `Importing ${i+1}/${items.length}…`; await S.store.saveExpense(g.id, items[i]); }
@@ -2076,7 +2093,7 @@ function renderSpending(){
   const left = t.income - t.spent;
   return `
     ${modHead("Daily Spending", "Everything you spend and earn, day by day.",
-      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button>`)}
+      `${monthNav("sp", ym)}<button class="btn sm" data-act="sp-export">⬇ Excel</button><button class="btn sm" data-act="sp-import">⬆ Import</button><button class="btn sm" data-act="imports-sp">📂 Imported files</button>${t.list.length?`<button class="btn sm ${S.spSel.on?"on-btn":""}" data-act="sel-sp">☑ Select</button>`:""}`)}
     <div class="stats four">
       ${tile("Spent", pm(t.spent))}
       ${tile("Income", pm(t.income), "pos")}
@@ -2091,6 +2108,7 @@ function renderSpending(){
         <option value="income" ${S.spCat==="income"?"selected":""}>💰 Income</option>
       </select>
     </div>
+    ${(S._shown.sp = list.map(x=>x.id), selBar("sp"))}
     ${!t.list.length ? `<div class="card empty"><div class="big">🧾</div><h3>Nothing recorded in ${monthName(ym)}</h3>
         <p>Add what you spend as you go, or import a list from Excel.</p>
         <div style="display:flex;gap:8px;justify-content:center"><button class="btn primary" data-act="sp-add">＋ Add spending</button><button class="btn" data-act="sp-import">⬆ Import from Excel</button></div></div>`
@@ -2103,7 +2121,8 @@ function renderSpending(){
 }
 function spRow(x){
   const c = catOf(x), inc = x.type==="income";
-  return `<button class="prow" data-sp="${esc(x.id)}"><div class="cat">${c.icon}</div>
+  const selMode = S.spSel.on && S.module==="daily-spending", picked = selMode && S.spSel.ids.has(x.id);
+  return `<button class="prow${picked?" picked":""}" data-sp="${esc(x.id)}">${selMode ? `<div class="cat">${selBox(picked)}</div>` : `<div class="cat">${c.icon}</div>`}
     <div><div class="t">${esc(x.desc || c.label)}</div><div class="s">${esc(c.label)}${x.method?` · ${esc(x.method)}`:""}${x.notes?` · ${esc(x.notes)}`:""}</div></div>
     <div class="amt ${inc?"pos":""}">${inc?"+ ":""}${pm(x.amount)}</div></button>`;
 }
@@ -2136,7 +2155,7 @@ function bindSpend(ov, m){
     sync(); const amt = toCents(m.amount);
     if(!isFinite(amt) || amt<=0) return $("#p-err").textContent = "Enter an amount above zero.";
     const item = {id:m.id||uid(), type:m.kind==="income"?"income":"expense", date:m.date||todayISO(), desc:m.desc.trim(), amount:amt,
-      category:m.category, method:m.method||"", notes:(m.notes||"").trim(), createdAt:m.createdAt||Date.now()};
+      category:m.category, method:m.method||"", notes:(m.notes||"").trim(), createdAt:m.createdAt||Date.now(), ...importTagsOf(S.spend.find(z=>z.id===m.id))};
     if(await writeP(() => S.pStore.save("spending", item), m.id ? "Saved" : (item.type==="income" ? "Income added" : "Spending added"))){
       closeModal(); if(monthOf(item.date)!==S.spMonth && S.module==="daily-spending"){ S.spMonth = monthOf(item.date); render(); } }
   };
@@ -2220,7 +2239,7 @@ function spImportModal(m){
 }
 function bindSpImport(ov, m){
   const go_ = ov.querySelector("[data-spdo]");
-  if(go_) go_.onclick = async () => { go_.disabled = true; const items = m.plan.items;
+  if(go_) go_.onclick = async () => { go_.disabled = true; const tag = {importId:uid(), importFile:m.fileName || "Imported file", importedAt:Date.now()}; const items = m.plan.items.map(x => ({...x, ...tag}));
     const ok = await writeP(async () => { for(let i=0;i<items.length;i++){ go_.textContent = `Importing ${i+1}/${items.length}…`; await S.pStore.save("spending", items[i]); } }, `Imported ${items.length} item${items.length>1?"s":""}`);
     if(ok){ closeModal(); const last = items.map(x=>x.date).sort().at(-1); if(last){ S.spMonth = monthOf(last); go("daily-spending"); } } else { go_.disabled=false; go_.textContent="Try again"; } };
   ov.querySelector("[data-sptpl]").onclick = spTemplate;
@@ -2638,9 +2657,10 @@ const EXTRA_MODALS = {
   "goal": [goalModal, bindGoal], "goalmoney": [goalMoneyModal, bindGoalMoney]
 };
 function personalClick(t){
+  if(selClick(t)) return true;
   if(t.dataset.nav){ go(t.dataset.nav); return true; }
   if(t.dataset.groupNest){ go("split-share"); selectGroup(t.dataset.groupNest); return true; }
-  if(t.dataset.mnav){ const key = {sp:"spMonth", bud:"budMonth", in:"inMonth"}[t.dataset.mnav]; S[key] = addMonths(S[key], +t.dataset.d); if(S[key] > thisMonth()) S[key] = thisMonth(); render(); return true; }
+  if(t.dataset.mnav){ if(t.dataset.mnav==='sp'){ S.spSel.ids.clear(); } const key = {sp:"spMonth", bud:"budMonth", in:"inMonth"}[t.dataset.mnav]; S[key] = addMonths(S[key], +t.dataset.d); if(S[key] > thisMonth()) S[key] = thisMonth(); render(); return true; }
   if(t.dataset.sp){ const x = S.spend.find(z=>z.id===t.dataset.sp); if(x) editSpend(x); return true; }
   if(t.dataset.goalEdit){ const g = S.goals.find(z=>z.id===t.dataset.goalEdit); if(g) openModal({type:"goal", id:g.id, name:g.name, emoji:g.emoji||"🐷", target:fromCents(g.target||0), date:g.date||"", history:g.history||[]}); return true; }
   if(t.dataset.goalMoney){ openModal({type:"goalmoney", gid:t.dataset.goalMoney, dir:"add"}); return true; }
@@ -2814,6 +2834,86 @@ function bindInvite(ov){
   };
 }
 EXTRA_MODALS.invite = [inviteModal, bindInvite];
+
+
+/* ---------- bulk select + imported files ---------- */
+S.sel = {on:false, ids:new Set()}; S.spSel = {on:false, ids:new Set()}; S._shown = {g:[], sp:[]};
+const selBox = on => `<span class="selbox ${on?"on":""}" aria-hidden="true">${on?"✓":""}</span>`;
+const IMPORT_KEYS = ["importId","importFile","importedAt"];
+const importTagsOf = x => x ? Object.fromEntries(IMPORT_KEYS.filter(k => x[k]!=null).map(k => [k, x[k]])) : {};
+function selBar(kind){
+  const st = kind==="g" ? S.sel : S.spSel; if(!st.on) return "";
+  const n = st.ids.size, shown = S._shown[kind].length;
+  return `<div class="selbar"><b>${n} selected</b>
+    <button class="btn sm" data-selall="${kind}" ${shown?"":"disabled"}>Select all shown (${shown})</button>
+    ${n ? `<button class="btn sm" data-selclear="${kind}">Clear</button>` : ""}
+    <span style="flex:1"></span>
+    <button class="btn sm danger-solid" data-seldel="${kind}" ${n?"":"disabled"}>🗑 Delete selected${n?` (${n})`:""}</button>
+    <button class="btn sm" data-seldone="${kind}">Done</button></div>`;
+}
+function importsOf(list){
+  const m = new Map();
+  list.forEach(x => { if(!x.importId) return;
+    if(!m.has(x.importId)) m.set(x.importId, {id:x.importId, file:x.importFile||"Imported file", at:x.importedAt||0, items:[]});
+    m.get(x.importId).items.push(x); });
+  return [...m.values()].sort((a,b)=>b.at-a.at);
+}
+function importsModal(m){
+  const g = group(), list = m.kind==="g" ? S.expenses : S.spend, imps = importsOf(list);
+  const cur = m.kind==="g" ? g.currency : PC();
+  return `<header><h3>Imported files</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="s">${m.kind==="g" ? `Files imported into <b>${esc(g.name)}</b>.` : "Files imported into Daily Spending."} Deleting a file removes every expense that came from it, including ones you've edited or split since.</div>
+    ${imps.length ? `<div class="card" style="box-shadow:none">${imps.map(x => {
+        const total = x.items.reduce((a,e)=>a+(e.amount||0),0);
+        return `<div class="improw"><div class="impinfo"><b>📄 ${esc(x.file)}</b><div class="s">${x.at?`Imported ${new Date(x.at).toLocaleString(undefined,{day:"numeric",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"})} · `:""}${x.items.length} item${x.items.length>1?"s":""} · ${money(total,cur)}</div></div>
+          <button class="btn sm danger-solid" data-impdel="${esc(x.id)}">🗑 Delete all ${x.items.length}</button></div>`; }).join("")}</div>`
+      : `<div class="card empty" style="padding:22px;box-shadow:none"><p>No imported files found here.</p></div>`}
+    <div class="s">Files imported before this button existed aren't labelled. To remove those, use <b>☑ Select</b>, filter the list (e.g. ⚠️ Needs splitting), then <b>Select all shown</b> and <b>Delete selected</b>.</div>
+  </div>
+  <footer><span></span><button class="btn" data-close>Close</button></footer>`;
+}
+function bindImports(ov, m){
+  ov.querySelectorAll("[data-impdel]").forEach(b => b.onclick = async () => {
+    const imp = importsOf(m.kind==="g" ? S.expenses : S.spend).find(x=>x.id===b.dataset.impdel); if(!imp) return;
+    if(b.dataset.armed!=="1"){ b.dataset.armed = "1"; b.textContent = `Click again to delete ${imp.items.length} item${imp.items.length>1?"s":""}`; return; }
+    b.disabled = true;
+    const ok = await bulkDelete(m.kind, imp.items.map(x=>x.id), n => b.textContent = `Deleting ${n}/${imp.items.length}…`);
+    if(ok) closeModal();
+  });
+}
+async function bulkDelete(kind, ids, progress){
+  const n = ids.length; if(!n) return true;
+  const g = group(), msg = `Deleted ${n} item${n>1?"s":""}`;
+  const run = async () => { for(let i=0;i<n;i++){ progress && progress(i+1);
+    if(kind==="g") await S.store.deleteExpense(g.id, ids[i]); else await S.pStore.del("spending", ids[i]); } };
+  const ok = kind==="g" ? await write(run, msg) : await writeP(run, msg);
+  if(ok){ const st = kind==="g" ? S.sel : S.spSel; ids.forEach(id => st.ids.delete(id)); }
+  render(); return ok;
+}
+function selClick(t){
+  const k = t.dataset.selall || t.dataset.selclear || t.dataset.seldel || t.dataset.seldone;
+  if(k){
+    const st = k==="g" ? S.sel : S.spSel;
+    if(t.dataset.selall){ S._shown[k].forEach(id => st.ids.add(id)); render(); return true; }
+    if(t.dataset.selclear){ st.ids.clear(); render(); return true; }
+    if(t.dataset.seldone){ st.on = false; st.ids.clear(); render(); return true; }
+    if(t.dataset.seldel){
+      if(t.dataset.armed!=="1"){ t.dataset.armed = "1"; t.textContent = `Click again to delete ${st.ids.size}`; return true; }
+      t.disabled = true; bulkDelete(k, [...st.ids], i => t.textContent = `Deleting ${i}/${st.ids.size}…`); return true;
+    }
+  }
+  if(t.dataset.exp && S.sel.on && S.module==="split-share"){ const id = t.dataset.exp; S.sel.ids.has(id) ? S.sel.ids.delete(id) : S.sel.ids.add(id); render(); return true; }
+  if(t.dataset.sp && S.spSel.on && S.module==="daily-spending"){ const id = t.dataset.sp; S.spSel.ids.has(id) ? S.spSel.ids.delete(id) : S.spSel.ids.add(id); render(); return true; }
+  switch(t.dataset.act){
+    case "sel-g": S.sel.on = !S.sel.on; S.sel.ids.clear(); render(); return true;
+    case "sel-sp": S.spSel.on = !S.spSel.on; S.spSel.ids.clear(); render(); return true;
+    case "imports-g": if(group()) openModal({type:"imports", kind:"g"}); return true;
+    case "imports-sp": openModal({type:"imports", kind:"sp"}); return true;
+  }
+  return false;
+}
+EXTRA_MODALS.imports = [importsModal, bindImports];
 
 /* ---------- events ---------- */
 root.addEventListener("click", async e => {
