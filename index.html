@@ -4063,7 +4063,7 @@ function cfSettings(){
   const cf = S.settings.cf || {}, cm = thisMonth();
   const bud = (S.settings.budget||{}).income;
   return {from: cf.from || addMonths(cm,-2), to: cf.to || addMonths(cm,9), opening: cf.opening || 0,
-    income: bud != null && bud !== 0 ? bud : (cf.income || 0), useExpected: cf.useExpected !== false, useBudget: cf.useBudget !== false};
+    income: bud != null && bud !== 0 ? bud : (cf.income || 0), useExpected: cf.useExpected !== false, useBudget: cf.useBudget !== false, useRepay: cf.useRepay !== false};
 }
 /* the instalment a loan schedules for month m (in your currency), or 0 */
 function scheduledIn(l, m){
@@ -4085,7 +4085,15 @@ function cashFlow(){
   const incOv = months.map((m,i) => ov[m] && (!incRec[i] || ov[m].force) ? ov[m] : null);
   const incEst = months.map((m,i) => !incOv[i] && !incRec[i] && C.useExpected && C.income > 0);
   const income = months.map((m,i) => incOv[i] ? incOv[i].amount : incEst[i] ? C.income : incRec[i]);
-  const owedRows = S.loans.filter(l => l.dir==="owed").map(l => ({label:`${l.name}${l.purpose?` · ${l.purpose}`:""}`, vals: months.map(m => scheduledIn(l, m))})).filter(r => r.vals.some(v=>v));
+  // money people pay you back: what you actually received (My Loans payments + Split & Share payments to you) up to this month, scheduled repayments after
+  const people = new Map(), prow = name => { const k = personKey(name); if(!people.has(k)) people.set(k, {label:name, got:z(), sched:z()}); const r = people.get(k); if(String(name).length > r.label.length) r.label = name; return r; };
+  S.loans.filter(l => l.dir==="owed").forEach(l => { const r = prow(l.name);
+    (l.entries||[]).forEach(e => { if(e.kind!=="pay" || e.opening) return; const i = idx.get(monthOf(e.date)); if(i!=null) r.got[i] += inPC(e.amount, l.cur); });
+    months.forEach((m,i) => r.sched[i] += scheduledIn(l, m)); });
+  for(const g of S.groups){ const me = meIn(g); if(!me) continue;
+    for(const e of (S.groupExp[g.id]||[])){ if(e.kind!=="settle" || e.to!==me.id || e.from===me.id) continue;
+      const i = idx.get(monthOf(e.date)); if(i==null) continue; prow(memberName(g, e.from)).got[i] += toBase(e.amount, g.currency, PC()); } }
+  const owedRows = !C.useRepay ? [] : [...people.values()].map(r => ({label:`Received from ${r.label}`, vals: months.map((m,i) => m < cm ? r.got[i] : m===cm ? Math.max(r.got[i], r.sched[i]) : r.sched[i])})).filter(r => r.vals.some(v=>v));
   const owedTotal = months.map((m,i) => owedRows.reduce((a,r)=>a+r.vals[i],0));
   const incomeTotal = months.map((m,i) => income[i] + owedTotal[i]);
   // banks
@@ -4142,7 +4150,7 @@ function renderCashFlow(){
   let body = "";
   body += sec("Income");
   body += `<tr><td class="stick">Income <span class="s">(click a month to edit)</span></td>${months.map((m,i)=>`<td class="${F.incEst[i]?"est":""}"><button class="cf-inc" data-cfinc="${m}" title="Edit expected income for ${monthName(m)}">${F.income[i] ? pm(F.income[i]) : `<span class="muted">—</span>`}${F.incOv[i] ? `<span class="est-tag ed">✎</span>` : F.incEst[i] ? `<span class="est-tag">est.</span>` : ""}</button></td>`).join("")}</tr>`;
-  F.owedRows.forEach(r => body += `<tr><td class="stick sub">🤲 ${esc(r.label)}</td>${r.vals.map(v=>cell(v)).join("")}</tr>`);
+  F.owedRows.forEach(r => body += `<tr><td class="stick sub" title="Payments recorded in My Loans or Split & Share. Future months show scheduled repayments.">🤲 ${esc(r.label)}</td>${r.vals.map(v=>cell(v)).join("")}</tr>`);
   body += `<tr class="cf-total"><td class="stick">Total income</td>${F.incomeTotal.map(v=>cell(v,"pos")).join("")}</tr>`;
   body += sec("Payables by bank");
   F.banks.forEach(b => {
@@ -4173,6 +4181,7 @@ function renderCashFlow(){
       <div class="cf-row">
         <label class="flt"><span>Expected monthly income <span class="s">(same as My Budget)</span></span><input class="input" data-setting="budget.income" data-kind="money" value="${C.income?fromCents(C.income):""}" placeholder="e.g. 18000"></label>
         <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-useexp" ${C.useExpected?"checked":""}> <span class="s">Use it for months with no income recorded</span></label>
+        <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-userepay" ${C.useRepay?"checked":""}> <span class="s">Count money people pay back to me as income (My Loans and Split & Share)</span></label>
         <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-usebud" ${C.useBudget?"checked":""}> <span class="s">Include My Budget for this month's remainder and future months${Object.values((S.settings.budget||{}).limits||{}).some(v=>v>0) ? "" : ` · <button class="linkbtn" data-nav="my-budget">set a budget</button>`}</span></label>
         <label class="flt"><span>Balance at the start of ${monthName(C.from)}</span><input class="input" data-setting="cf.opening" data-kind="money" value="${C.opening?fromCents(C.opening):""}" placeholder="0.00"></label>
       </div>
@@ -4301,6 +4310,7 @@ function cfChange(el){
     if(from > to) [from, to] = el.id==="cf-from" ? [from, from] : [to, to];
     saveSetting("cf", {...(S.settings.cf||{}), from, to}); return true; }
   if(el.id==="cf-useexp"){ saveSetting("cf.useExpected", el.checked); return true; }
+  if(el.id==="cf-userepay"){ saveSetting("cf.useRepay", el.checked); return true; }
   if(el.id==="cf-usebud"){ saveSetting("cf.useBudget", el.checked); return true; }
   return false;
 }
