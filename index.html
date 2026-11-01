@@ -434,6 +434,20 @@ table.cf-table tr.cf-budget td{color:var(--accent)}
 .pitem:last-child{border-bottom:0}
 .pitem>span:first-child{flex:1}
 .palloc{border:1px solid var(--line);border-radius:10px;padding:4px 12px}
+
+.cf-view{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+.cf-view .seg.mini{flex-direction:row;width:auto}
+.cf-view .seg.mini button{padding:6px 12px;font-size:13px;white-space:nowrap}
+.cf-view .seg.mini{padding:3px}
+table.cf-vert th{text-align:right;white-space:normal;min-width:96px;vertical-align:bottom}
+table.cf-vert th.v-grp{text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line);border-left:2px solid var(--line)}
+table.cf-vert .stick{min-width:110px}
+table.cf-vert td.v-sub,table.cf-vert th.v-sub{font-weight:700;background:color-mix(in srgb,var(--panel2) 60%,var(--panel))}
+table.cf-vert td.v-total,table.cf-vert th.v-total{font-weight:700}
+table.cf-vert td.v-run,table.cf-vert th.v-run{font-weight:800;background:var(--accent-soft)}
+table.cf-vert tr.v-cur td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
+.cf-tog{border:0;background:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 6px 0 0;width:18px}
+.cf-tog:hover{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -4172,30 +4186,52 @@ function renderCashFlow(){
   const F = cashFlow(), {C, cm, months} = F;
   const opts = sel => { const out = []; for(let i=-36;i<=60;i++){ const m = addMonths(cm,i); out.push(`<option value="${m}" ${m===sel?"selected":""}>${monthName(m)}</option>`); } return out.join(""); };
   const cell = (v, cls="") => `<td class="${cls}">${v ? pm(v) : `<span class="muted">—</span>`}</td>`;
-  const head = `<tr><th class="stick">Month</th>${months.map(m=>`<th class="${m===cm?"curm":""}">${monthName(m,true)}${m===cm?"<br><span>now</span>":m>cm?"<br><span>plan</span>":""}</th>`).join("")}</tr>`;
-  const sec = (label, extra="") => `<tr class="cf-sec"><td class="stick" colspan="1">${label}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
-  let body = "";
-  body += sec("Income");
-  body += `<tr><td class="stick">Income <span class="s">(click a month to edit)</span></td>${months.map((m,i)=>`<td class="${F.incEst[i]?"est":""}"><button class="cf-inc" data-cfinc="${m}" title="Edit expected income for ${monthName(m)}">${F.income[i] ? pm(F.income[i]) : `<span class="muted">—</span>`}${F.incOv[i] ? `<span class="est-tag ed">✎</span>` : F.incEst[i] ? `<span class="est-tag">est.</span>` : ""}</button></td>`).join("")}</tr>`;
-  F.owedRows.forEach(r => body += `<tr><td class="stick sub" title="Payments recorded in My Loans or Split & Share. Future months show scheduled repayments.">🤲 ${esc(r.label)}</td>${r.vals.map(v=>cell(v)).join("")}</tr>`);
-  body += `<tr class="cf-total"><td class="stick">Total income</td>${F.incomeTotal.map(v=>cell(v,"pos")).join("")}</tr>`;
-  body += sec("Payables by bank");
+  const cfg = S.settings.cf || {}, vertical = cfg.layout === "rows", compact = !!cfg.compact, coll = cfg.collapsed || {};
+  const isCol = g => compact || !!coll[g];
+  const tog = g => `<button class="cf-tog" data-cfcol="${esc(g)}" title="${isCol(g) ? "Show the items" : "Hide the items, show only the subtotal"}">${isCol(g) ? "▸" : "▾"}</button>`;
+  /* row model: one entry per line of the cash flow; td(i) gives the cell for month i */
+  const R = [];
+  const add = (t, label, td, extra={}) => R.push({t, label, td, ...extra});
+  add("sec", `${compact ? "" : tog("Income")}Income`);
+  add("item", `Income <span class="s">(click a month to edit)</span>`, i => { const m = months[i]; return `<td class="${F.incEst[i]?"est":""}"><button class="cf-inc" data-cfinc="${m}" title="Edit expected income for ${monthName(m)}">${F.income[i] ? pm(F.income[i]) : `<span class="muted">—</span>`}${F.incOv[i] ? `<span class="est-tag ed">✎</span>` : F.incEst[i] ? `<span class="est-tag">est.</span>` : ""}</button></td>`; }, {short:"Income", grp:"Income"});
+  F.owedRows.forEach(r => add("item", `🤲 ${esc(r.label)}`, i => cell(r.vals[i]), {grp:"Income", tip:"Payments marked as income in My Loans. Future months show scheduled repayments."}));
+  add("total", "Total income", i => cell(F.incomeTotal[i], "pos"), {grp:"Income", cls:"cf-total"});
+  add("sec", "Payables by bank");
   F.banks.forEach(b => {
-    const nm = b.budget ? "Budgeted spending" : b.name===OTHER ? "No bank / cash" : b.name;
-    body += `<tr class="cf-bank${b.budget?" cf-budget":""}"><td class="stick">${b.budget?"🎯":b.name===OTHER?"👛":"🏦"} ${esc(nm)}${b.budget?` <span class="s">(from My Budget · this month: what's left · click to edit)</span> <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button>`:""}</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
-    if(b.spend.some(v=>v)) body += `<tr><td class="stick sub">${b.name===OTHER ? "Spending" : "Card / account spending"}</td>${b.spend.map(v=>cell(v)).join("")}</tr>`;
-    if(b.group.some(v=>v)) body += `<tr><td class="stick sub">🤝 Group expenses you paid</td>${b.group.map(v=>cell(v)).join("")}</tr>`;
-    if(b.shared.some(v=>v)) body += `<tr><td class="stick sub">🤝 Your share of group expenses</td>${b.shared.map(v=>cell(v)).join("")}</tr>`;
-    b.items.forEach(it => body += it.cat
-      ? `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map((v,i) => months[i] < cm ? cell(0) : `<td><button class="cf-inc" data-cfbud="${months[i]}|${it.cat}" title="Edit ${esc(it.label.replace(/^\S+\s/,""))} budget for ${monthName(months[i])}">${v ? pm(v) : `<span class="muted">—</span>`}${it.edited[i] ? `<span class="est-tag ed">✎</span>` : ""}</button></td>`).join("")}</tr>`
-      : `<tr><td class="stick sub">${esc(it.label)}</td>${it.vals.map(v=>cell(v)).join("")}</tr>`);
-    body += `<tr class="cf-subtotal"><td class="stick">Subtotal · ${esc(nm)}</td>${b.sub.map(v=>cell(v)).join("")}</tr>`;
+    const nm = b.budget ? "Budgeted spending" : b.name===OTHER ? "No bank / cash" : b.name, icon = b.budget?"🎯":b.name===OTHER?"👛":"🏦";
+    const ghead = `${compact ? "" : tog(nm)}${icon} ${esc(nm)}${b.budget ? ` <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button>` : ""}`;
+    add("bank", `${compact ? "" : tog(nm)}${icon} ${esc(nm)}${b.budget?` <span class="s">(from My Budget · this month: what's left · click to edit)</span> <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button>`:""}`, null, {cls:`cf-bank${b.budget?" cf-budget":""}`, grp:nm, ghead});
+    if(b.spend.some(v=>v)) add("item", b.name===OTHER ? "Spending" : "Card / account spending", i => cell(b.spend[i]), {grp:nm});
+    if(b.group.some(v=>v)) add("item", "🤝 Group expenses you paid", i => cell(b.group[i]), {grp:nm});
+    if(b.shared.some(v=>v)) add("item", "🤝 Your share of group expenses", i => cell(b.shared[i]), {grp:nm});
+    b.items.forEach(it => add("item", esc(it.label), it.cat
+      ? i => months[i] < cm ? cell(0) : `<td><button class="cf-inc" data-cfbud="${months[i]}|${it.cat}" title="Edit ${esc(it.label.replace(/^\S+\s/,""))} budget for ${monthName(months[i])}">${it.vals[i] ? pm(it.vals[i]) : `<span class="muted">—</span>`}${it.edited[i] ? `<span class="est-tag ed">✎</span>` : ""}</button></td>`
+      : i => cell(it.vals[i]), {grp:nm}));
+    add("sub", `Subtotal · ${esc(nm)}`, i => cell(b.sub[i]), {grp:nm, short:isCol(nm) && vertical ? (compact ? `${icon} ${esc(nm)}` : "Subtotal") : compact ? `${icon} ${esc(nm)}` : "Subtotal", cls:"cf-subtotal"});
   });
-  if(!F.banks.length) body += `<tr><td class="stick sub muted">Nothing to pay in this period</td>${months.map(()=>`<td></td>`).join("")}</tr>`;
-  if(C.useBudget && !F.banks.some(b=>b.budget)) body += `<tr class="cf-bank cf-budget"><td class="stick">🎯 Budgeted spending <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button></td>${months.map(()=>`<td></td>`).join("")}</tr>`;
-  body += `<tr class="cf-total"><td class="stick">Total due</td>${F.due.map((v,i)=>`<td class="${v > F.incomeTotal[i] ? "overspend" : ""}">${v ? pm(v) : "—"}</td>`).join("")}</tr>`;
-  body += `<tr class="cf-total"><td class="stick">Left over (income − due)</td>${F.left.map(v=>`<td class="${v<0?"overspend":"pos"}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
-  body += `<tr class="cf-run"><td class="stick">Running balance${C.opening?` <span class="s">(from ${pm(C.opening)})</span>`:""}</td>${F.running.map(v=>`<td class="${v<0?"overspend":""}">${v<0?"− ":""}${pm(Math.abs(v))}</td>`).join("")}</tr>`;
+  if(!F.banks.length) add("item", `<span class="muted">Nothing to pay in this period</span>`, () => `<td></td>`, {grp:"Payables"});
+  if(C.useBudget && !F.banks.some(b=>b.budget)) add("bank", `🎯 Budgeted spending <button class="btn sm" data-cfbudadd="1" style="margin-left:6px">＋ Add</button>`, null, {cls:"cf-bank cf-budget", grp:"Budgeted spending"});
+  add("total", "Total due", i => `<td class="${F.due[i] > F.incomeTotal[i] ? "overspend" : ""}">${F.due[i] ? pm(F.due[i]) : "—"}</td>`, {grp:"Totals", cls:"cf-total"});
+  add("total", "Left over (income − due)", i => `<td class="${F.left[i]<0?"overspend":"pos"}">${F.left[i]<0?"− ":""}${pm(Math.abs(F.left[i]))}</td>`, {grp:"Totals", cls:"cf-total", short:"Left over"});
+  add("run", `Running balance${C.opening?` <span class="s">(from ${pm(C.opening)})</span>`:""}`, i => `<td class="${F.running[i]<0?"overspend":""}">${F.running[i]<0?"− ":""}${pm(Math.abs(F.running[i]))}</td>`, {grp:"Totals", cls:"cf-run", short:"Running balance"});
+  const shown = R.filter(r => !(compact && (r.t==="item" || r.t==="bank")) && !(r.t==="item" && isCol(r.grp)));
+  let table;
+  if(!vertical){
+    const head = `<tr><th class="stick">Month</th>${months.map(m=>`<th class="${m===cm?"curm":""}">${monthName(m,true)}${m===cm?"<br><span>now</span>":m>cm?"<br><span>plan</span>":""}</th>`).join("")}</tr>`;
+    const body = shown.map(r => r.t==="sec" ? `<tr class="cf-sec"><td class="stick">${r.label}</td>${months.map(()=>`<td></td>`).join("")}</tr>`
+      : !r.td ? `<tr class="${r.cls}"><td class="stick">${r.label}</td>${months.map(()=>`<td></td>`).join("")}</tr>`
+      : `<tr class="${r.cls||""}"><td class="stick${r.t==="item"?" sub":""}"${r.tip?` title="${esc(r.tip)}"`:""}>${compact && r.t==="sub" ? r.short : r.label}</td>${months.map((_,i)=>r.td(i)).join("")}</tr>`).join("");
+    table = `<table class="bk cf-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  } else {
+    const cols = shown.filter(r => r.td);
+    const groups = []; cols.forEach(c => { const g = groups.at(-1); if(g && g.name===c.grp) g.n++; else groups.push({name:c.grp, n:1, head: (R.find(r=>r.t==="bank" && r.grp===c.grp)||{}).ghead || (c.grp==="Income" && !compact ? `${tog("Income")}Income` : null)}); });
+    const colCls = c => c.t==="sub" ? "v-sub" : c.t==="total" ? "v-total" : c.t==="run" ? "v-run" : "";
+    const head1 = `<tr><th class="stick" rowspan="2">Month</th>${groups.map(g => `<th colspan="${g.n}" class="v-grp">${g.head || esc(g.name)}</th>`).join("")}</tr>`;
+    const head2 = `<tr>${cols.map(c => `<th class="${colCls(c)}"${c.tip?` title="${esc(c.tip)}"`:""}>${c.short || c.label}</th>`).join("")}</tr>`;
+    const body = months.map((m,i) => `<tr class="${m===cm?"v-cur":""}"><td class="stick"><b>${monthName(m,true)}</b>${m===cm?` <span class="s">now</span>`:m>cm?` <span class="s">plan</span>`:""}</td>${cols.map(c => c.td(i).replace(/^<td( class="([^"]*)")?/, (x, a, cl) => `<td class="${[cl||"", colCls(c)].join(" ").trim()}"`)).join("")}</tr>`).join("");
+    const headC = `<tr><th class="stick">Month</th>${cols.map(c => `<th class="${colCls(c)}">${c.short || c.label}</th>`).join("")}</tr>`;
+    table = `<table class="bk cf-table cf-vert"><thead>${compact ? headC : head1 + head2}</thead><tbody>${body}</tbody></table>`;
+  }
   const over = F.left.filter(v=>v<0).length, firstNeg = F.running.findIndex(v=>v<0);
   return `
     <div class="cf-controls card">
@@ -4217,7 +4253,11 @@ function renderCashFlow(){
       ${firstNeg>=0 ? ` · <span class="overspend">Running balance goes negative in ${monthName(months[firstNeg])}</span>` : ""}
       · ending balance <b class="${F.running.at(-1)<0?"overspend":""}">${F.running.at(-1)<0?"− ":""}${pm(Math.abs(F.running.at(-1)||0))}</b>
     </div>
-    <div class="card tbl-wrap freeze cf-wrap"><table class="bk cf-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    <div class="cf-view">
+      <div class="seg mini"><button type="button" data-cflayout="cols" class="${vertical?"":"on"}" title="Months across the top">⇆ Months across</button><button type="button" data-cflayout="rows" class="${vertical?"on":""}" title="One row per month">⇅ Months down</button></div>
+      <div class="seg mini"><button type="button" data-cfcompact="0" class="${compact?"":"on"}">☰ All items</button><button type="button" data-cfcompact="1" class="${compact?"on":""}">Σ Subtotals only</button></div>
+    </div>
+    <div class="card tbl-wrap freeze cf-wrap">${table}</div>
     <div class="s" style="margin-top:10px">Spending comes from Daily Spending (add a <b>Bank</b> to each item, or a Bank column when importing). Instalments come from My Loans and credit card plans, each in the month it's due. Loan payments recorded in Daily Spending aren't counted twice. <b class="overspend">Red bold</b> = more going out than coming in, or a negative running balance.</div>`;
 }
 function cfExport(){
@@ -4319,6 +4359,9 @@ function bindCfBud(ov, m){
 }
 EXTRA_MODALS.cfbud = [cfBudModal, bindCfBud];
 function cfClick(t){
+  if(t.dataset.cflayout){ saveSetting("cf.layout", t.dataset.cflayout); return true; }
+  if(t.dataset.cfcompact){ saveSetting("cf.compact", t.dataset.cfcompact==="1"); if(t.dataset.cfcompact==="0") saveSetting("cf.collapsed", {}); return true; }
+  if(t.dataset.cfcol){ const c = {...((S.settings.cf||{}).collapsed||{})}; if(c[t.dataset.cfcol]) delete c[t.dataset.cfcol]; else c[t.dataset.cfcol] = 1; saveSetting("cf.collapsed", c); return true; }
   if(t.dataset.cfinc){ openModal({type:"cfinc", ym:t.dataset.cfinc, scope:"one"}); return true; }
   if(t.dataset.cfbud){ const [ym, cat] = t.dataset.cfbud.split("|"); openModal({type:"cfbud", ym, cat, scope:"one"}); return true; }
   if(t.dataset.cfbudadd){ const C = cfSettings(), cm = thisMonth(); openModal({type:"cfbud", add:true, ym: C.from > cm ? C.from : (C.to < cm ? C.to : addMonths(cm,1) <= C.to ? addMonths(cm,1) : cm), cat:"travel", scope:"one"}); return true; }
