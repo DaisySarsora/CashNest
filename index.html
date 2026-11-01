@@ -420,6 +420,20 @@ table.cf-table tr.cf-budget td{color:var(--accent)}
 .catrow .input{padding:7px 10px}
 .ftag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:10px;letter-spacing:.04em;vertical-align:middle}
 .stat .s{margin-top:4px}
+
+.ptable-wrap{padding:0;overflow:hidden}
+.ptable{width:100%;border-collapse:collapse}
+.ptable th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:600}
+.ptable td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+.ptable .num{text-align:right;font-variant-numeric:tabular-nums}
+.ptable tfoot td{border-bottom:0;background:var(--panel2)}
+.pname{border:0;background:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-align:left}.pprow:hover{background:var(--panel2)}
+.pprow .caret{color:var(--muted);display:inline-block;width:12px}
+.pdetail td{background:var(--panel2);padding:4px 14px 10px 34px}
+.pitem{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)}
+.pitem:last-child{border-bottom:0}
+.pitem>span:first-child{flex:1}
+.palloc{border:1px solid var(--line);border-radius:10px;padding:4px 12px}
 </style>
 </head>
 <body>
@@ -2969,6 +2983,9 @@ function personalClick(t){
   if(selClick(t)) return true;
   if(t.dataset.nav){ go(t.dataset.nav); return true; }
   if(t.dataset.groupNest){ go("split-share"); selectGroup(t.dataset.groupNest); return true; }
+  if(t.dataset.personPay){ const p = peopleLedger().find(x=>x.key===t.dataset.personPay); if(p) openModal({type:"personpay", key:p.key, dir: personItems(p, p.net>=0?"owed":"owe").length ? (p.net>=0?"owed":"owe") : (p.net>=0?"owe":"owed"), amount:fromCents(Math.abs(p.net) || Math.max(p.owed,p.owe)), date:todayISO(), note:""}); return true; }
+  if(t.dataset.personMore){ const p = peopleLedger().find(x=>x.key===t.dataset.personMore); if(p) openModal({type:"loan", dir: p.net>=0?"owed":"owe", name:p.name, purpose:"", cur:canPickCur(PC())?"AED":PC(), principal:"", start:todayISO(), monthly:"", rate:"", dueDay:"", endDate:"", firstDue:"", notes:""}); return true; }
+  if(t.dataset.personOpen){ S.openPerson = S.openPerson===t.dataset.personOpen ? null : t.dataset.personOpen; render(); return true; }
   if(t.dataset.splitSettle){ S.tab = "balances"; try{localStorage.setItem("fairshare-tab","balances");}catch{} go("split-share"); selectGroup(t.dataset.splitSettle); return true; }
   if(t.dataset.mnav){ if(t.dataset.mnav==='sp'){ S.spSel.ids.clear(); } const key = {sp:"spMonth", bud:"budMonth", in:"inMonth"}[t.dataset.mnav]; S[key] = addMonths(S[key], +t.dataset.d); if(S[key] > thisMonth()) S[key] = thisMonth(); render(); return true; }
   if(t.dataset.sp){
@@ -3600,8 +3617,8 @@ function splitDebts(){
     const ex = (S.groupExp||{})[g.id] || (g.id===S.gid ? S.expenses : null); if(!ex || !ex.length) continue;
     const me = meIn(g); if(!me) continue;
     simplify(computeBalances(g, ex).bal).forEach(t => {
-      if(t.from===me.id) out.push({dir:"owe", gid:g.id, gname:g.name, person:memberName(g,t.to), amount:toBase(t.amount, g.currency, PC()), orig:t.amount, cur:g.currency});
-      else if(t.to===me.id) out.push({dir:"owed", gid:g.id, gname:g.name, person:memberName(g,t.from), amount:toBase(t.amount, g.currency, PC()), orig:t.amount, cur:g.currency});
+      if(t.from===me.id) out.push({dir:"owe", gid:g.id, gname:g.name, pid:t.to, me:me.id, person:memberName(g,t.to), amount:toBase(t.amount, g.currency, PC()), orig:t.amount, cur:g.currency});
+      else if(t.to===me.id) out.push({dir:"owed", gid:g.id, gname:g.name, pid:t.from, me:me.id, person:memberName(g,t.from), amount:toBase(t.amount, g.currency, PC()), orig:t.amount, cur:g.currency});
     });
   }
   return out;
@@ -3690,7 +3707,7 @@ function renderLoans(){
         <span class="st ${d.paid?"ok":d.overdue?"over":"warn"}" style="min-width:92px;text-align:right">${d.paid?"✓ Paid":d.overdue?"✕ Overdue":d.daysLeft===0?"! Due today":`! In ${d.daysLeft} day${d.daysLeft>1?"s":""}`}</span>
         ${d.paid ? "" : `<button class="btn sm primary" data-loan-pay="${esc(l.id)}">Pay</button>`}
       </div>`).join("")}</div>` : ""}
-    ${renderSplitDebts()}
+    ${renderPeople()}
     <h3 class="sec">Loans I owe</h3>
     ${open("owe").length ? `<div class="goal-grid">${open("owe").map(loanCard).join("")}</div>`
       : `<div class="card empty" style="padding:24px"><p>No loans you owe. 🎉</p><button class="btn sm" data-act="loan-new-owe">＋ Add a loan, credit card or instalment plan</button></div>`}
@@ -3708,6 +3725,113 @@ function renderLoans(){
     ${closed.length ? `<details class="closed-loans"><summary>Paid off (${closed.length})</summary><div class="goal-grid" style="margin-top:10px">${closed.map(loanCard).join("")}</div></details>` : ""}
     <div class="s" style="margin-top:18px">Your loans are also counted in <b>My Future</b>: what you owe is subtracted from your savings, and money owed to you is added. You can turn that off there.</div>`;
 }
+/* ---- people: your own loans with someone + what Split & Share says, combined per person ---- */
+const personKey = n => nrm(n).split(" ")[0];
+function peopleLedger(){
+  const map = new Map(), memberKeys = new Set();
+  (S.groups||[]).forEach(g => { const me = meIn(g); g.members.forEach(m => { if(!me || m.id!==me.id) memberKeys.add(personKey(m.name)); }); });
+  const get = name => { const k = personKey(name); if(!k) return null;
+    if(!map.has(k)) map.set(k, {key:k, name, loans:[], split:[], owed:0, owe:0});
+    const p = map.get(k); if(String(name).length > String(p.name).length) p.name = name; return p; };
+  S.loans.filter(l => !l.card && loanBalance(l) > 0).forEach(l => {
+    if(l.dir==="owe" && !memberKeys.has(personKey(l.name)) && !S.loans.some(x => x.dir==="owed" && personKey(x.name)===personKey(l.name))) return; // banks etc. stay in their own section
+    const p = get(l.name); if(!p) return; const b = inPC(loanBalance(l), l.cur);
+    p.loans.push(l); if(l.dir==="owe") p.owe += b; else p.owed += b; });
+  if(splitSync()) splitDebts().forEach(d => { const p = get(d.person); if(!p) return; p.split.push(d); if(d.dir==="owe") p.owe += d.amount; else p.owed += d.amount; });
+  return [...map.values()].map(p => ({...p, net: p.owed - p.owe})).filter(p => p.owed || p.owe).sort((a,b) => Math.abs(b.net) - Math.abs(a.net));
+}
+function personItems(p, dir){
+  const loans = p.loans.filter(l => l.dir===dir).sort((a,b) => (a.start||"").localeCompare(b.start||""))
+    .map(l => ({type:"loan", id:l.id, label:`${l.purpose || (dir==="owed" ? "Money lent" : "Loan")}${l.start ? ` · since ${fmtDay(l.start)}` : ""}`, open:inPC(loanBalance(l), l.cur), l}));
+  const split = p.split.filter(d => d.dir===dir).map(d => ({type:"split", id:d.gid, label:`Split & Share · ${d.gname}`, open:d.amount, d}));
+  return [...loans, ...split];
+}
+function renderPeople(){
+  const on = splitSync(), list = peopleLedger(), sd = on ? [] : splitDebts();
+  if(!list.length && !(S.groups||[]).length) return "";
+  const amt = (v, cls) => v ? `<b class="${cls}">${pm(v)}</b>` : `<span class="s">–</span>`;
+  const rows = list.map(p => {
+    const lOwed = p.loans.filter(l=>l.dir==="owed").reduce((a,l)=>a+inPC(loanBalance(l), l.cur),0), lOwe = p.loans.filter(l=>l.dir==="owe").reduce((a,l)=>a+inPC(loanBalance(l), l.cur),0);
+    const sOwed = p.split.filter(d=>d.dir==="owed").reduce((a,d)=>a+d.amount,0), sOwe = p.split.filter(d=>d.dir==="owe").reduce((a,d)=>a+d.amount,0);
+    const ln = lOwed - lOwe, sn = sOwed - sOwe, open = S.openPerson===p.key;
+    const cell = v => v>0 ? `<b class="pos">${pm(v)}</b>` : v<0 ? `<b class="neg">−${pm(-v)}</b>` : `<span class="s">–</span>`;
+    const detail = !open ? "" : `<tr class="pdetail"><td colspan="5">${[...personItems(p,"owed"), ...personItems(p,"owe")].map(it => `<div class="pitem">
+        <span>${it.type==="loan" ? (it.l.dir==="owed"?"🤲":"🏦") : "🤝"} ${esc(it.label)}</span>
+        <span class="${(it.type==="loan"?it.l.dir:it.d.dir)==="owed"?"pos":"neg"}">${(it.type==="loan"?it.l.dir:it.d.dir)==="owed" ? "owes you" : "you owe"} <b>${pm(it.open)}</b></span>
+        ${it.type==="loan" ? `<button class="btn sm ghost" data-loan-pdf="${esc(it.id)}" title="PDF statement">📄</button><button class="btn sm ghost" data-loan-edit="${esc(it.id)}">✎</button>` : `<button class="btn sm ghost" data-split-settle="${esc(it.id)}">Open group →</button>`}
+      </div>`).join("")}</td></tr>`;
+    return `<tr class="pprow ${open?"open":""}">
+        <td><button class="pname" data-person-open="${esc(p.key)}"><span class="caret">${open?"▾":"▸"}</span> <b>${esc(p.name)}</b></button><div class="s" style="padding-left:16px">${p.net>0 ? "owes you" : p.net<0 ? "you owe" : "even"} · ${p.loans.length + p.split.length} balance${p.loans.length + p.split.length>1?"s":""}</div></td>
+        <td class="num">${cell(ln)}</td><td class="num">${cell(sn)}</td>
+        <td class="num">${p.net>0 ? `<b class="pos">${pm(p.net)}</b>` : p.net<0 ? `<b class="neg">−${pm(-p.net)}</b>` : "0.00"}</td>
+        <td class="num" style="white-space:nowrap"><button class="btn sm primary" data-person-pay="${esc(p.key)}">＋ Payment</button> <button class="btn sm" data-person-more="${esc(p.key)}" title="${p.net>=0?"Lent them more":"Borrowed more"}">＋ ${p.net>=0 ? "Lent more" : "Borrowed"}</button></td>
+      </tr>${detail}`; }).join("");
+  const tO = list.reduce((a,p)=>a+Math.max(0,p.net),0), tW = list.reduce((a,p)=>a+Math.max(0,-p.net),0);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec" style="margin:0">👥 People: who owes who</h3>
+      <button class="btn sm ${on?"on-btn":""}" data-act="loan-split-toggle" title="Include Split & Share balances here, in your loan totals and in My Future">${on ? "✓ Split & Share included" : "Split & Share not included"}</button></div>
+    <div class="s" style="margin:4px 0 10px">Your own loans with each person (older balances, new borrowing) are combined with what your Split & Share groups say. <b>＋ Payment</b> records money received or paid and spreads it oldest-first across their balances. Click a name to see each balance.</div>
+    ${list.length ? `<div class="card ptable-wrap" style="margin-bottom:22px"><table class="ptable"><thead><tr><th>Person</th><th class="num">Own loans</th><th class="num">Split & Share</th><th class="num">Total</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td><b>Total</b></td><td></td><td></td><td class="num"><span class="pos">+${pm(tO)}</span> / <span class="neg">−${pm(tW)}</span></td><td></td></tr></tfoot></table></div>`
+      : `<div class="card empty" style="padding:18px;margin-bottom:22px"><p>Nobody owes you and you owe nobody. All square. ✓</p>${!on && sd.length ? `<p class="s">${sd.length} Split & Share balance${sd.length>1?"s are":" is"} hidden. Turn on “Split & Share included” to see ${sd.length>1?"them":"it"}.</p>` : ""}</div>`}`;
+}
+function personPayModal(m){
+  const p = peopleLedger().find(x => x.key===m.key); if(!p) return `<header><h3>All settled</h3><button class="btn ghost sm" data-close>✕</button></header><div class="body"><p>Nothing is open with this person any more.</p></div><footer><span></span><button class="btn" data-close>Close</button></footer>`;
+  const items = personItems(p, m.dir), total = items.reduce((a,i)=>a+i.open,0);
+  const alloc = personAlloc(items, m);
+  return `<header><h3>${m.dir==="owed" ? "🤲 Money received from" : "💸 Payment to"} ${esc(p.name)}</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="seg">${[["owed",`${esc(p.name)} paid me`],["owe",`I paid ${esc(p.name)}`]].map(([k,t])=>`<button type="button" data-ppdir="${k}" class="${m.dir===k?"on":""}" ${personItems(p,k).length?"":"disabled"}>${t}</button>`).join("")}</div>
+    <div class="row2">
+      <div class="field"><label>Amount (${esc(PC())})</label><input class="input amount-in" id="pp-amt" inputmode="decimal" value="${esc(m.amount)}" placeholder="0.00"><div class="calc" id="pp-calc"></div></div>
+      <div class="field"><label>Date</label><input class="input" id="pp-date" type="date" value="${esc(m.date)}" style="padding:13px 12px"></div>
+    </div>
+    <div class="field"><label>Applied to <span class="s">(oldest first; you can change the amounts)</span></label>
+      <div class="palloc">${items.map((it,i) => `<div class="pitem"><span>${it.type==="loan"?(m.dir==="owed"?"🤲":"🏦"):"🤝"} ${esc(it.label)}<div class="s">open ${pm(it.open)}</div></span>
+        <input class="input" data-ppi="${i}" inputmode="decimal" value="${esc(alloc[i] ? fromCents(alloc[i]) : "")}" placeholder="0.00" style="width:120px;text-align:right"></div>`).join("")}</div>
+      <div class="s" style="margin-top:6px">Total open: <b>${pm(total)}</b>. Split & Share parts are saved as a payment in that group, so the group's balances update too.</div></div>
+    <div class="field"><label>Note (optional)</label><input class="input" id="pp-note" value="${esc(m.note||"")}" placeholder="e.g. GCash transfer, cash"></div>
+    <div class="err" id="pp-err"></div>
+  </div>
+  <footer><span></span><div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-ppsave>Save payment</button></div></footer>`;
+}
+function personAlloc(items, m){
+  if(m.manual) return items.map((_,i) => m.manual[i] || 0);
+  let left = toCents(m.amount); if(!isFinite(left) || left<=0) return items.map(()=>0);
+  return items.map(it => { const x = Math.min(left, it.open); left -= x; return x; });
+}
+function bindPersonPay(ov, m){
+  const $ = s => ov.querySelector(s); if(!$("#pp-amt")) return;
+  const sync = () => { m.amount = $("#pp-amt").value; m.date = $("#pp-date").value; m.note = $("#pp-note").value; };
+  ov.querySelectorAll("[data-ppdir]").forEach(b => b.onclick = () => { sync(); m.dir = b.dataset.ppdir; m.manual = null; renderModal(); });
+  $("#pp-amt").oninput = () => { $("#pp-calc").innerHTML = calcPreview($("#pp-amt").value, {currency:PC()});
+    if(m.manual) return; sync(); const p = peopleLedger().find(x=>x.key===m.key), al = personAlloc(personItems(p, m.dir), m);
+    ov.querySelectorAll("[data-ppi]").forEach(inp => inp.value = al[+inp.dataset.ppi] ? fromCents(al[+inp.dataset.ppi]) : ""); };
+  ov.querySelectorAll("[data-ppi]").forEach(inp => inp.oninput = () => {
+    m.manual = [...ov.querySelectorAll("[data-ppi]")].map(x => { const v = toCents(x.value); return isFinite(v) && v>0 ? v : 0; });
+    const s = m.manual.reduce((a,b)=>a+b,0); $("#pp-amt").value = s ? fromCents(s) : ""; m.amount = $("#pp-amt").value; });
+  $("[data-ppsave]").onclick = async ev => {
+    sync(); const p = peopleLedger().find(x=>x.key===m.key), items = personItems(p, m.dir), al = personAlloc(items, m);
+    const amt = toCents(m.amount), sum = al.reduce((a,b)=>a+b,0);
+    if(!isFinite(amt) || amt<=0) return $("#pp-err").textContent = "Enter an amount above zero.";
+    if(sum !== amt) return $("#pp-err").textContent = `The amounts applied (${pm(sum)}) don't add up to the payment (${pm(amt)}).`;
+    const over = items.findIndex((it,i) => al[i] > it.open + 1);
+    if(over >= 0) return $("#pp-err").textContent = `That's more than what's open on “${items[over].label}” (${pm(items[over].open)}).`;
+    const date = m.date || todayISO(), note = (m.note||"").trim(), btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Saving…";
+    let ok = true;
+    for(let i=0;i<items.length && ok;i++){ const it = items[i], x = al[i]; if(!x) continue;
+      if(it.type==="loan"){ const l = it.l, inLoanCur = toBase(x, PC(), l.cur||PC());
+        ok = await writeP(() => S.pStore.save("loans", {...l, entries:[...(l.entries||[]), {id:uid(), date, kind:"pay", amount:Math.min(inLoanCur, loanBalance(l)), note: note || "Recorded from People"}]})); }
+      else { const d = it.d, g = S.groups.find(z=>z.id===d.gid);
+        const item = {id:uid(), kind:"settle", from: d.dir==="owed" ? d.pid : d.me, to: d.dir==="owed" ? d.me : d.pid, amount: toBase(x, PC(), g.currency), date, notes: note || "Recorded in My Loans", createdAt:Date.now()};
+        ok = await write(async () => { await S.store.saveExpense(d.gid, item); (S.groupExp[d.gid] ||= []).push(item); if(d.gid===S.gid && !S.expenses.some(e=>e.id===item.id)) S.expenses.push(item); invalidateSpend(); }); }
+    }
+    if(ok){ toast(m.dir==="owed" ? `Received ${pm(amt)} from ${p.name}` : `Paid ${pm(amt)} to ${p.name}`); closeModal(); loadGroupExpensesSoon(); render(); }
+    else { btn.disabled = false; btn.textContent = "Try again"; }
+  };
+  setTimeout(()=>$("#pp-amt")?.focus());
+}
+EXTRA_MODALS.personpay = [personPayModal, bindPersonPay];
 function renderSplitDebts(){
   const on = splitSync(), list = splitDebts();
   if(!list.length && !(S.groups||[]).length) return "";
