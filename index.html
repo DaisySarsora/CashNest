@@ -448,6 +448,7 @@ table.cf-vert td.v-run,table.cf-vert th.v-run{font-weight:800;background:var(--a
 table.cf-vert tr.v-cur td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
 .cf-tog{border:0;background:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 6px 0 0;width:18px}
 .cf-tog:hover{color:var(--accent)}
+.more-row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:14px 0 4px}
 </style>
 </head>
 <body>
@@ -690,7 +691,7 @@ function subscribeGroups(){
 }
 function selectGroup(id, silent){
   if(id === S.gid && unsubExp) return;
-  S.gid = id; S.expenses = []; S.expLoaded = false; S.gf = {paid:"", who:"", period:"", from:"", to:"", split:""}; if(S.sel){ S.sel.on = false; S.sel.ids.clear(); } S.q=""; S.catFilter=""; S.focus=null; S.stmt.member=null;
+  S.gid = id; S.expenses = []; S.expLoaded = false; S.gf = {paid:"", who:"", period:"", from:"", to:"", split:""}; if(S.sel){ S.sel.on = false; S.sel.ids.clear(); } S.q=""; S.catFilter=""; S.gLimit=0; S.focus=null; S.stmt.member=null;
   try{ if(id) localStorage.setItem("fairshare-gid", id); }catch{}
   if(unsubExp){ unsubExp(); unsubExp = null; }
   if(id){
@@ -853,7 +854,8 @@ function renderExpenses(g){
   const F = S.gf, active = filtersActive();
   const sumOf = arr => arr.filter(e=>e.kind!=="settle").reduce((a,e)=>a+e.amount,0);
   const months = {};
-  list.forEach(e => (months[(e.date||"").slice(0,7)] ||= []).push(e));
+  const lim = S.gLimit || 200, visible = list.slice(0, lim);
+  visible.forEach(e => (months[(e.date||"").slice(0,7)] ||= []).push(e));
   const monthLabel = k => { const [y,m]=k.split("-"); return new Date(+y, +m-1, 1).toLocaleDateString(undefined,{month:"long",year:"numeric"}); };
   return `
     ${unsplitBanner()}
@@ -886,6 +888,8 @@ function renderExpenses(g){
       Object.entries(months).map(([k, items]) => `
       <div class="month">${esc(monthLabel(k))}</div>
       <div class="card">${items.map(e => expenseRow(g,e)).join("")}</div>`).join("")}
+    ${list.length > visible.length ? `<div class="more-row"><span class="s">Showing the latest ${visible.length} of ${list.length}. Use the filters or search to find older ones.</span>
+      <button class="btn sm" data-act="g-more">Show ${Math.min(200, list.length - visible.length)} more</button>${list.length - visible.length > 200 ? `<button class="btn sm ghost" data-act="g-all">Show all ${list.length}</button>` : ""}</div>` : ""}
   `;
 }
 
@@ -3018,6 +3022,8 @@ function personalClick(t){
     case "new-group-nest": go("split-share"); openModal({type:"group", name:"", currency:PC(), members:[{id:uid(),name:"Me"}]}); return true;
     case "in-pdf": insightsPdf(); return true;
     case "cats": openModal({type:"cats"}); return true;
+    case "g-more": S.gLimit = (S.gLimit || 200) + 200; render(); return true;
+    case "g-all": S.gLimit = 1e9; render(); return true;
     case "loan-split-toggle": saveSetting("loanSplit", !splitSync()); return true;
     case "go-cashflow": S.futTab = "cash"; try { localStorage.setItem("cashnest-futtab","cash"); } catch {} go("my-future"); return true;
     case "invite": if(group()) openModal({type:"invite"}); return true;
@@ -3065,15 +3071,14 @@ function makeSupabaseDb(sb){
   const meta = {fromCache:false, hasPendingWrites:false};
   const mapErr = e => ({code: (e && (e.code==="42501" || /row-level security|permission denied/i.test(e.message||""))) ? "invalid_argument" : "unavailable", message: e && e.message || "error"});
   const idOf = p => p.split("/").pop();
-  async function fetchCol(path){
+  const PAGE = 1000, OVERLAP = 120000, FULL_EVERY = 60*60*1000;
+  async function pageAll(build){
     let out = [], from = 0;
-    for(;;){
-      const {data, error} = await sb.from("docs").select("path,data").eq("parent", path).order("path").range(from, from+999);
-      if(error) throw mapErr(error);
-      out = out.concat(data || []); if(!data || data.length < 1000) break; from += 1000;
-    }
+    for(;;){ const {data, error} = await build().range(from, from+PAGE-1); if(error) throw mapErr(error);
+      out = out.concat(data || []); if(!data || data.length < PAGE) break; from += PAGE; }
     return out;
   }
+  const fetchCol = path => pageAll(() => sb.from("docs").select("path,data,updated_at").eq("parent", path).order("path"));
   async function fetchDoc(path){
     const {data, error} = await sb.from("docs").select("path,data").eq("path", path).maybeSingle();
     if(error) throw mapErr(error); return data;
@@ -3081,12 +3086,45 @@ function makeSupabaseDb(sb){
   const colSnap = rows => { const docs = rows.map(r => ({id:idOf(r.path), exists:true, data:()=>r.data, metadata:meta}));
     return {docs, size:docs.length, empty:!docs.length, metadata:meta, docChanges:()=>[]}; };
   const docSnap = (path, row) => ({id:idOf(path), exists:!!row, data:()=>row ? row.data : undefined, metadata:meta});
+  const maxTs = (rows, ts) => rows.reduce((m, r) => { const t = Date.parse(r.updated_at) || 0; return t > m ? t : m; }, ts || 0);
+  /* collections: one full download, then only what changed since the last check (plus a cheap row count to catch deletions) */
+  async function syncCol(s){
+    const now = Date.now();
+    if(!s.rows || now - s.fullAt > FULL_EVERY){
+      const rows = await fetchCol(s.path);
+      const next = new Map(rows.map(r => [r.path, {data:r.data, key:JSON.stringify(r.data)}]));
+      let changed = !s.rows || next.size !== s.rows.size;
+      if(!changed) for(const [p, v] of next){ const o = s.rows.get(p); if(!o || o.key !== v.key){ changed = true; break; } }
+      s.rows = next; s.since = maxTs(rows, 0); s.fullAt = now; return changed;
+    }
+    const since = new Date(Math.max(0, s.since - OVERLAP)).toISOString();
+    const delta = await pageAll(() => sb.from("docs").select("path,data,updated_at").eq("parent", s.path).gt("updated_at", since).order("path"));
+    let changed = false;
+    delta.forEach(r => { const key = JSON.stringify(r.data), o = s.rows.get(r.path); if(!o || o.key !== key){ s.rows.set(r.path, {data:r.data, key}); changed = true; } });
+    s.since = maxTs(delta, s.since);
+    const {count, error} = await sb.from("docs").select("path", {count:"exact", head:true}).eq("parent", s.path);
+    if(error) throw mapErr(error);
+    if(count != null && count !== s.rows.size){   // something was deleted: fetch the list of paths only (no data) and drop the missing ones
+      const alive = new Set((await pageAll(() => sb.from("docs").select("path").eq("parent", s.path).order("path"))).map(r => r.path));
+      for(const p of [...s.rows.keys()]) if(!alive.has(p)){ s.rows.delete(p); changed = true; }
+      if(alive.size !== s.rows.size){ s.fullAt = 0; return syncCol(s); }   // still off: start over with a full download
+    }
+    return changed;
+  }
   async function refresh(s){
+    if(s.busy){ s.again = true; return; }
+    s.busy = true;
     try {
-      const v = s.kind==="col" ? await fetchCol(s.path) : await fetchDoc(s.path);
-      const key = JSON.stringify(v);
-      if(key !== s.last && subs.has(s)){ s.last = key; s.cb(s.kind==="col" ? colSnap(v) : docSnap(s.path, v)); }
+      if(s.kind==="col"){
+        const changed = await syncCol(s);
+        if((changed || !s.sent) && subs.has(s)){ s.sent = true; s.last = 1;
+          s.cb(colSnap([...s.rows.entries()].sort((a,b)=>a[0]<b[0]?-1:1).map(([path, v]) => ({path, data:v.data})))); }
+      } else {
+        const v = await fetchDoc(s.path), key = JSON.stringify(v);
+        if(key !== s.last && subs.has(s)){ s.last = key; s.cb(docSnap(s.path, v)); }
+      }
     } catch(e){ if(s.last===undefined && !s.failed){ s.failed = true; s.err && s.err(e); } }
+    finally { s.busy = false; if(s.again){ s.again = false; refresh(s); } }
   }
   const refreshAll = () => subs.forEach(refresh);
   let t = null; const refreshSoon = () => { clearTimeout(t); t = setTimeout(refreshAll, 250); };
@@ -3096,7 +3134,9 @@ function makeSupabaseDb(sb){
   function collection(path){
     return { path,
       onSnapshot(cb, err){ const s = {kind:"col", path, cb, err}; subs.add(s); refresh(s); return () => subs.delete(s); },
-      async get(){ return colSnap(await fetchCol(path)); },
+      async get(){ const live = [...subs].find(s => s.kind==="col" && s.path===path && s.rows);
+        if(live){ await refresh(live); return colSnap([...live.rows.entries()].map(([p, v]) => ({path:p, data:v.data}))); }
+        return colSnap(await fetchCol(path)); },
       doc(id){ return doc(`${path}/${id}`); } };
   }
   function doc(path){
