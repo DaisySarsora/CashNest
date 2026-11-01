@@ -3759,7 +3759,7 @@ function renderPeople(){
         <span>${it.type==="loan" ? (it.l.dir==="owed"?"🤲":"🏦") : "🤝"} ${esc(it.label)}</span>
         <span class="${(it.type==="loan"?it.l.dir:it.d.dir)==="owed"?"pos":"neg"}">${(it.type==="loan"?it.l.dir:it.d.dir)==="owed" ? "owes you" : "you owe"} <b>${pm(it.open)}</b></span>
         ${it.type==="loan" ? `<button class="btn sm ghost" data-loan-pdf="${esc(it.id)}" title="PDF statement">📄</button><button class="btn sm ghost" data-loan-edit="${esc(it.id)}">✎</button>` : `<button class="btn sm ghost" data-split-settle="${esc(it.id)}">Open group →</button>`}
-      </div>`).join("")}</td></tr>`;
+      </div>`).join("")}${personPaymentsHtml(p)}</td></tr>`;
     return `<tr class="pprow ${open?"open":""}">
         <td><button class="pname" data-person-open="${esc(p.key)}"><span class="caret">${open?"▾":"▸"}</span> <b>${esc(p.name)}</b></button><div class="s" style="padding-left:16px">${p.net>0 ? "owes you" : p.net<0 ? "you owe" : "even"} · ${p.loans.length + p.split.length} balance${p.loans.length + p.split.length>1?"s":""}</div></td>
         <td class="num">${cell(ln)}</td><td class="num">${cell(sn)}</td>
@@ -3774,6 +3774,28 @@ function renderPeople(){
       <tbody>${rows}</tbody>
       <tfoot><tr><td><b>Total</b></td><td></td><td></td><td class="num"><span class="pos">+${pm(tO)}</span> / <span class="neg">−${pm(tW)}</span></td><td></td></tr></tfoot></table></div>`
       : `<div class="card empty" style="padding:18px;margin-bottom:22px"><p>Nobody owes you and you owe nobody. All square. ✓</p>${!on && sd.length ? `<p class="s">${sd.length} Split & Share balance${sd.length>1?"s are":" is"} hidden. Turn on “Split & Share included” to see ${sd.length>1?"them":"it"}.</p>` : ""}</div>`}`;
+}
+/* payments a person made to you (own loans + group payments), each can be counted as income or not */
+function personPayments(p){
+  const out = [], inc = (S.settings||{}).repayIncome || {};
+  S.loans.filter(l => l.dir==="owed" && personKey(l.name)===p.key).forEach(l => (l.entries||[]).forEach(e => { if(e.kind==="pay" && !e.opening)
+    out.push({ref:`loan|${l.id}|${e.id}`, date:e.date, amount:inPC(e.amount, l.cur), src:l.purpose || "Money lent", on:!!e.income}); }));
+  (S.groups||[]).forEach(g => { const me = meIn(g); if(!me) return;
+    ((S.groupExp||{})[g.id]||[]).forEach(e => { if(e.kind==="settle" && e.to===me.id && e.from!==me.id && personKey(memberName(g, e.from))===p.key)
+      out.push({ref:`settle|${e.id}`, date:e.date, amount:toBase(e.amount, g.currency, PC()), src:`Split & Share · ${g.name}`, on:!!inc[e.id]}); }); });
+  return out.sort((a,b) => (b.date||"").localeCompare(a.date||""));
+}
+function personPaymentsHtml(p){
+  const list = personPayments(p); if(!list.length) return "";
+  return `<div class="s" style="margin:10px 0 2px;font-weight:600">Payments received · tick to count as income in My Future</div>
+    ${list.slice(0,12).map(x => `<div class="pitem"><span>💵 ${fmtDay(x.date)} · ${esc(x.src)}</span><b class="pos">${pm(x.amount)}</b>
+      <label class="chk" style="margin:0"><input type="checkbox" data-repinc="${esc(x.ref)}" ${x.on?"checked":""}> <span class="s">Income</span></label></div>`).join("")}`;
+}
+async function toggleRepayIncome(ref, on){
+  const [kind, a, b] = ref.split("|");
+  if(kind==="settle"){ const ri = {...((S.settings||{}).repayIncome||{})}; if(on) ri[a] = 1; else delete ri[a]; saveSetting("repayIncome", ri); return; }
+  const l = S.loans.find(x => x.id===a); if(!l) return;
+  await writeP(() => S.pStore.save("loans", {...l, entries:(l.entries||[]).map(e => e.id===b ? (on ? {...e, income:true} : (({income, ...r}) => r)(e)) : e)}), on ? "Counted as income" : "No longer counted as income");
 }
 function personPayModal(m){
   const p = peopleLedger().find(x => x.key===m.key); if(!p) return `<header><h3>All settled</h3><button class="btn ghost sm" data-close>✕</button></header><div class="body"><p>Nothing is open with this person any more.</p></div><footer><span></span><button class="btn" data-close>Close</button></footer>`;
@@ -3791,6 +3813,7 @@ function personPayModal(m){
         <input class="input" data-ppi="${i}" inputmode="decimal" value="${esc(alloc[i] ? fromCents(alloc[i]) : "")}" placeholder="0.00" style="width:120px;text-align:right"></div>`).join("")}</div>
       <div class="s" style="margin-top:6px">Total open: <b>${pm(total)}</b>. Split & Share parts are saved as a payment in that group, so the group's balances update too.</div></div>
     <div class="field"><label>Note (optional)</label><input class="input" id="pp-note" value="${esc(m.note||"")}" placeholder="e.g. GCash transfer, cash"></div>
+    ${m.dir==="owed" ? `<label class="chk"><input type="checkbox" id="pp-income" ${m.asIncome!==false?"checked":""}> <span><b>Add as income</b> <span class="s">(shows as “Received from ${esc(p.name)}” in My Future → Monthly cash flow)</span></span></label>` : ""}
     <div class="err" id="pp-err"></div>
   </div>
   <footer><span></span><div style="display:flex;gap:8px"><button class="btn" data-close>Cancel</button><button class="btn primary" data-ppsave>Save payment</button></div></footer>`;
@@ -3802,7 +3825,7 @@ function personAlloc(items, m){
 }
 function bindPersonPay(ov, m){
   const $ = s => ov.querySelector(s); if(!$("#pp-amt")) return;
-  const sync = () => { m.amount = $("#pp-amt").value; m.date = $("#pp-date").value; m.note = $("#pp-note").value; };
+  const sync = () => { m.amount = $("#pp-amt").value; m.date = $("#pp-date").value; m.note = $("#pp-note").value; if($("#pp-income")) m.asIncome = $("#pp-income").checked; };
   ov.querySelectorAll("[data-ppdir]").forEach(b => b.onclick = () => { sync(); m.dir = b.dataset.ppdir; m.manual = null; renderModal(); });
   $("#pp-amt").oninput = () => { $("#pp-calc").innerHTML = calcPreview($("#pp-amt").value, {currency:PC()});
     if(m.manual) return; sync(); const p = peopleLedger().find(x=>x.key===m.key), al = personAlloc(personItems(p, m.dir), m);
@@ -3818,15 +3841,17 @@ function bindPersonPay(ov, m){
     const over = items.findIndex((it,i) => al[i] > it.open + 1);
     if(over >= 0) return $("#pp-err").textContent = `That's more than what's open on “${items[over].label}” (${pm(items[over].open)}).`;
     const date = m.date || todayISO(), note = (m.note||"").trim(), btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Saving…";
-    let ok = true;
+    let ok = true; const asInc = m.dir==="owed" && m.asIncome !== false, incIds = [];
     for(let i=0;i<items.length && ok;i++){ const it = items[i], x = al[i]; if(!x) continue;
       if(it.type==="loan"){ const l = it.l, inLoanCur = toBase(x, PC(), l.cur||PC());
-        ok = await writeP(() => S.pStore.save("loans", {...l, entries:[...(l.entries||[]), {id:uid(), date, kind:"pay", amount:Math.min(inLoanCur, loanBalance(l)), note: note || "Recorded from People"}]})); }
+        ok = await writeP(() => S.pStore.save("loans", {...l, entries:[...(l.entries||[]), {id:uid(), date, kind:"pay", amount:Math.min(inLoanCur, loanBalance(l)), note: note || "Recorded from People", ...(asInc ? {income:true} : {})}]})); }
       else { const d = it.d, g = S.groups.find(z=>z.id===d.gid);
         const item = {id:uid(), kind:"settle", from: d.dir==="owed" ? d.pid : d.me, to: d.dir==="owed" ? d.me : d.pid, amount: toBase(x, PC(), g.currency), date, notes: note || "Recorded in My Loans", createdAt:Date.now()};
+        if(asInc) incIds.push(item.id);
         ok = await write(async () => { await S.store.saveExpense(d.gid, item); (S.groupExp[d.gid] ||= []).push(item); if(d.gid===S.gid && !S.expenses.some(e=>e.id===item.id)) S.expenses.push(item); invalidateSpend(); }); }
     }
-    if(ok){ toast(m.dir==="owed" ? `Received ${pm(amt)} from ${p.name}` : `Paid ${pm(amt)} to ${p.name}`); closeModal(); loadGroupExpensesSoon(); render(); }
+    if(ok && incIds.length){ const ri = {...((S.settings||{}).repayIncome||{})}; incIds.forEach(id => ri[id] = 1); saveSetting("repayIncome", ri); }
+    if(ok){ toast(m.dir==="owed" ? `Received ${pm(amt)} from ${p.name}${asInc ? " · added as income" : ""}` : `Paid ${pm(amt)} to ${p.name}`); closeModal(); loadGroupExpensesSoon(); render(); }
     else { btn.disabled = false; btn.textContent = "Try again"; }
   };
   setTimeout(()=>$("#pp-amt")?.focus());
@@ -3994,6 +4019,7 @@ function loanPayModal(m){
     </div>
     <div class="field"><label>Note (optional)</label><input class="input" id="lp-note" value="${esc(m.note||"")}" placeholder="${owe?"e.g. November instalment":"e.g. Cash, GCash transfer"}"></div>
     ${m.kind==="pay" ? `<label class="chk"><input type="checkbox" id="lp-spend" ${m.toSpend?"checked":""}> <span>${owe ? "Also add it to <b>Daily Spending</b> as a loan payment, so your budget counts it" : "Also add it to <b>Daily Spending</b> as income"}</span></label>` : ""}
+    ${m.kind==="pay" && !owe ? `<label class="chk"><input type="checkbox" id="lp-income" ${m.asIncome!==false?"checked":""}> <span><b>Add as income</b> <span class="s">(My Future → Monthly cash flow)</span></span></label>` : ""}
     <div class="s">Balance now: <b>${moneyFull(bal, l.cur||PC())}</b></div>
     <div class="err" id="lp-err"></div>
   </div>
@@ -4001,14 +4027,14 @@ function loanPayModal(m){
 }
 function bindLoanPay(ov, m){
   const $ = s => ov.querySelector(s), l = S.loans.find(x=>x.id===m.lid);
-  const sync = () => { m.amount = $("#lp-amt").value; m.date = $("#lp-date").value; m.note = $("#lp-note").value; if($("#lp-spend")) m.toSpend = $("#lp-spend").checked; };
+  const sync = () => { m.amount = $("#lp-amt").value; m.date = $("#lp-date").value; m.note = $("#lp-note").value; if($("#lp-spend")) m.toSpend = $("#lp-spend").checked; if($("#lp-income")) m.asIncome = $("#lp-income").checked; };
   ov.querySelectorAll("[data-lkind]").forEach(b => b.onclick = () => { sync(); m.kind = b.dataset.lkind; renderModal(); });
   $("#lp-amt").oninput = () => { $("#lp-calc").innerHTML = calcPreview($("#lp-amt").value, {currency:l.cur||PC()}); };
   $("[data-lpsave]").onclick = async () => {
     sync(); const amt = toCents(m.amount), bal = loanBalance(l);
     if(!isFinite(amt) || amt<=0) return $("#lp-err").textContent = "Enter an amount above zero.";
     if(m.kind==="pay" && amt > bal) return $("#lp-err").textContent = `That's more than the balance (${moneyFull(bal, l.cur||PC())}).`;
-    const entry = {id:uid(), date:m.date||todayISO(), kind:m.kind, amount:amt, note:(m.note||"").trim()};
+    const entry = {id:uid(), date:m.date||todayISO(), kind:m.kind, amount:amt, note:(m.note||"").trim(), ...(m.kind==="pay" && l.dir==="owed" && m.asIncome!==false ? {income:true} : {})};
     const owe = l.dir==="owe";
     let spendItem = null;
     if(m.kind==="pay" && m.toSpend){
@@ -4088,12 +4114,13 @@ function cashFlow(){
   // money people pay you back: what you actually received (My Loans payments + Split & Share payments to you) up to this month, scheduled repayments after
   const people = new Map(), prow = name => { const k = personKey(name); if(!people.has(k)) people.set(k, {label:name, got:z(), sched:z()}); const r = people.get(k); if(String(name).length > r.label.length) r.label = name; return r; };
   S.loans.filter(l => l.dir==="owed").forEach(l => { const r = prow(l.name);
-    (l.entries||[]).forEach(e => { if(e.kind!=="pay" || e.opening) return; const i = idx.get(monthOf(e.date)); if(i!=null) r.got[i] += inPC(e.amount, l.cur); });
+    (l.entries||[]).forEach(e => { if(e.kind!=="pay" || e.opening || !e.income) return; const i = idx.get(monthOf(e.date)); if(i!=null) r.got[i] += inPC(e.amount, l.cur); });
     months.forEach((m,i) => r.sched[i] += scheduledIn(l, m)); });
   for(const g of S.groups){ const me = meIn(g); if(!me) continue;
-    for(const e of (S.groupExp[g.id]||[])){ if(e.kind!=="settle" || e.to!==me.id || e.from===me.id) continue;
+    const incSet = (S.settings||{}).repayIncome || {};
+    for(const e of (S.groupExp[g.id]||[])){ if(e.kind!=="settle" || e.to!==me.id || e.from===me.id || !incSet[e.id]) continue;
       const i = idx.get(monthOf(e.date)); if(i==null) continue; prow(memberName(g, e.from)).got[i] += toBase(e.amount, g.currency, PC()); } }
-  const owedRows = !C.useRepay ? [] : [...people.values()].map(r => ({label:`Received from ${r.label}`, vals: months.map((m,i) => m < cm ? r.got[i] : m===cm ? Math.max(r.got[i], r.sched[i]) : r.sched[i])})).filter(r => r.vals.some(v=>v));
+  const owedRows = [...people.values()].map(r => ({label:`Received from ${r.label}`, vals: months.map((m,i) => m < cm ? r.got[i] : m===cm ? Math.max(r.got[i], r.sched[i]) : r.sched[i])})).filter(r => r.vals.some(v=>v));
   const owedTotal = months.map((m,i) => owedRows.reduce((a,r)=>a+r.vals[i],0));
   const incomeTotal = months.map((m,i) => income[i] + owedTotal[i]);
   // banks
@@ -4181,7 +4208,6 @@ function renderCashFlow(){
       <div class="cf-row">
         <label class="flt"><span>Expected monthly income <span class="s">(same as My Budget)</span></span><input class="input" data-setting="budget.income" data-kind="money" value="${C.income?fromCents(C.income):""}" placeholder="e.g. 18000"></label>
         <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-useexp" ${C.useExpected?"checked":""}> <span class="s">Use it for months with no income recorded</span></label>
-        <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-userepay" ${C.useRepay?"checked":""}> <span class="s">Count money people pay back to me as income (My Loans and Split & Share)</span></label>
         <label class="chk" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="cf-usebud" ${C.useBudget?"checked":""}> <span class="s">Include My Budget for this month's remainder and future months${Object.values((S.settings.budget||{}).limits||{}).some(v=>v>0) ? "" : ` · <button class="linkbtn" data-nav="my-budget">set a budget</button>`}</span></label>
         <label class="flt"><span>Balance at the start of ${monthName(C.from)}</span><input class="input" data-setting="cf.opening" data-kind="money" value="${C.opening?fromCents(C.opening):""}" placeholder="0.00"></label>
       </div>
@@ -4310,7 +4336,7 @@ function cfChange(el){
     if(from > to) [from, to] = el.id==="cf-from" ? [from, from] : [to, to];
     saveSetting("cf", {...(S.settings.cf||{}), from, to}); return true; }
   if(el.id==="cf-useexp"){ saveSetting("cf.useExpected", el.checked); return true; }
-  if(el.id==="cf-userepay"){ saveSetting("cf.useRepay", el.checked); return true; }
+  if(el.dataset && el.dataset.repinc){ toggleRepayIncome(el.dataset.repinc, el.checked); return true; }
   if(el.id==="cf-usebud"){ saveSetting("cf.useBudget", el.checked); return true; }
   return false;
 }
