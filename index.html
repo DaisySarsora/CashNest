@@ -778,7 +778,7 @@ function renderPage(){
   root.innerHTML = `
     <div class="mobile-top">
       <div class="brand" style="padding:0"><div class="logo">${LOGO}</div></div>
-      <select class="input" id="m-module" aria-label="Section">${MODULES.map(([id,ic,l])=>`<option value="${id}" ${id===mod?"selected":""}>${ic} ${l}</option>`).join("")}${S.sb ? `<option value="__account">👤 Account & password</option>` : ""}</select>
+      <select class="input" id="m-module" aria-label="Section">${MODULES.map(([id,ic,l])=>`<option value="${id}" ${id===mod?"selected":""}>${ic} ${l}</option>`).join("")}<option value="__backup">💾 Backup & restore</option>${S.sb ? `<option value="__account">👤 Account & password</option>` : ""}</select>
       ${split ? `<select class="input" id="m-group" aria-label="Group">
         ${S.groups.map(x=>`<option value="${esc(x.id)}" ${x.id===S.gid?"selected":""}>${esc(x.name)}</option>`).join("")}
         <option value="__new">＋ New group…</option></select>` : ""}
@@ -789,7 +789,7 @@ function renderPage(){
         <nav class="mods">
           ${MODULES.map(([id,ic,l]) => `<button class="nav ${id===mod?"on":""}" data-nav="${id}" title="${l}"><span class="ni">${ic}</span><span class="nl">${l}</span></button>${id==="split-share" && split ? groupsSub : ""}`).join("")}
         </nav>
-        <div class="side-foot">${S.sb ? `Signed in as <b>${esc(S.userEmail)}</b><br><button class="linkbtn" data-act="account">🔑 Set password</button> · <button class="linkbtn" data-act="signout">Sign out</button>` : S.pLocal ? "Saved in this browser" : "Personal pages are private to you"}</div>
+        <div class="side-foot">${S.sb ? `Signed in as <b>${esc(S.userEmail)}</b><br><button class="linkbtn" data-act="account">🔑 Set password</button> · <button class="linkbtn" data-act="signout">Sign out</button>` : S.pLocal ? "Saved in this browser" : "Personal pages are private to you"}<br><button class="linkbtn" data-act="backup">💾 Backup & restore</button></div>
       </aside>
       <main>${notices}${curBar()}${content}</main>
     </div>
@@ -2964,7 +2964,10 @@ function renderNest(){
   const P = futurePlan();
   const months = Array.from({length:6}, (_,i)=>addMonths(ym, i-5));
   const card = (title, nav, body) => `<div class="card nest-card"><div class="nc-h"><h3>${title}</h3>${nav?`<button class="btn sm ghost" data-nav="${nav}">Open →</button>`:""}</div>${body}</div>`;
-  return `
+  const lb = (S.settings||{}).lastBackup, hasData = S.spend.length + S.loans.length + (S.groups||[]).length > 0;
+  const lbDays = lb ? Math.floor((Date.now() - lb) / 864e5) : null;
+  const backupNag = hasData && (lbDays==null || lbDays >= 30) ? `<div class="warn-banner"><span>💾 ${lbDays==null ? "You haven't downloaded a backup yet." : `Your last backup was ${lbDays} days ago.`} Keep a copy of your data safe.</span><span style="display:flex;gap:6px"><button class="btn sm primary" data-act="backup-now">Back up now</button><button class="btn sm" data-act="backup">More…</button></span></div>` : "";
+  return `${backupNag}
     <div class="mhead"><div><h2>${greet} 👋</h2><div class="sub">Here's your money at a glance · ${new Date().toLocaleDateString(undefined,{weekday:"long", day:"numeric", month:"long"})}</div></div>
       <div class="hbtns"><label class="s" for="cur-sel">Currency</label><select class="input" id="cur-sel" data-setting="currency" data-kind="text" style="width:auto;padding:6px 10px">${CURRENCIES.map(c=>`<option ${c===PC()?"selected":""}>${c}</option>`).join("")}</select></div></div>
     <div class="stats four">
@@ -3048,6 +3051,8 @@ function personalClick(t){
     case "go-cashflow": S.futTab = "cash"; try { localStorage.setItem("cashnest-futtab","cash"); } catch {} go("my-future"); return true;
     case "invite": if(group()) openModal({type:"invite"}); return true;
     case "account": openModal({type:"account"}); return true;
+    case "backup": openModal({type:"backup"}); return true;
+    case "backup-now": makeBackup(); return true;
     case "signout": S.sb && S.sb.auth.signOut().then(()=>location.reload()); return true;
     case "in-xlsx": insightsXlsx(); return true;
     case "bud-suggest": {
@@ -3068,7 +3073,7 @@ function personalChange(e){
   if(el.hasAttribute && el.hasAttribute("data-futloans")){ saveSetting("future.countLoans", el.checked); return true; }
   if(el.id==="sp-cat"){ S.spCat = el.value; render(); return true; }
   if(el.id==="bud-add"){ if(el.value){ S.budAdd.push(el.value); render(); setTimeout(()=>document.querySelector(`[data-setting="budget.limits.${el.value}"]`)?.focus(), 30); } return true; }
-  if(el.id==="m-module"){ if(el.value==="__account"){ el.value = S.module; openModal({type:"account"}); return true; } go(el.value); return true; }
+  if(el.id==="m-module"){ if(el.value==="__backup"){ el.value = S.module; openModal({type:"backup"}); return true; } if(el.value==="__account"){ el.value = S.module; openModal({type:"account"}); return true; } go(el.value); return true; }
   if(el.dataset.setting){
     const kind = el.dataset.kind, raw = el.value;
     let v;
@@ -3174,6 +3179,95 @@ function makeSupabaseDb(sb){
 function loadScript(src){
   return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
 }
+/* ---------- backup & restore: one file with everything you can see ---------- */
+async function collectBackup(){
+  const groups = [];
+  for(const g of (S.groups||[])){
+    let ex = (S.groupExp||{})[g.id] || (g.id===S.gid ? S.expenses : []);
+    try { if(S.store && S.store.getExpenses) ex = await S.store.getExpenses(g.id); } catch {}
+    groups.push({group:g, expenses:ex||[]});
+  }
+  const settings = {...(S.settings||{})}; delete settings.lastBackup;
+  return {app:"CashNest", kind:"backup", version:1, exportedAt:new Date().toISOString(), account:S.userEmail||"", currency:PC(),
+    personal:{spending:S.spend||[], goals:S.goals||[], loans:S.loans||[], settings}, groups};
+}
+async function makeBackup(){
+  toast("Preparing your backup…");
+  const b = await collectBackup();
+  const n = b.personal.spending.length + b.groups.reduce((a,g)=>a+g.expenses.length,0);
+  await saveFile(`CashNest backup ${todayISO()}.json`, new Blob([JSON.stringify(b)], {type:"application/json"}), `Backup (${n} entries)`);
+  saveSetting("lastBackup", Date.now());
+}
+function backupModal(m){
+  const lb = (S.settings||{}).lastBackup, f = m.file;
+  const cnt = f ? {sp:f.personal.spending.length, go:f.personal.goals.length, lo:f.personal.loans.length, gr:f.groups.length, ge:f.groups.reduce((a,g)=>a+g.expenses.length,0)} : null;
+  return `<header><h3>💾 Backup & restore</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="card" style="padding:14px">
+      <b>Download a backup</b>
+      <div class="s" style="margin:4px 0 10px">One file with everything: Daily Spending, budgets, categories, settings, savings goals, loans, and every Split & Share group you're in with all its expenses. Keep it somewhere safe (email it to yourself, Google Drive, iCloud).<br>${lb ? `Last backup: <b>${fmtDay(new Date(lb).toISOString().slice(0,10))}</b>` : "No backup yet."}</div>
+      <button class="btn primary" data-act="backup-now">⬇ Download backup</button>
+    </div>
+    <div class="card" style="padding:14px">
+      <b>Restore from a backup</b>
+      <div class="s" style="margin:4px 0 10px">Brings back entries from a backup file. It <b>adds back</b> anything missing and restores the backed-up version of each entry. It never deletes anything you've added since.</div>
+      ${!f ? `<button class="btn" data-bkpick>📂 Choose backup file…</button>` : `
+        <div class="s">File from <b>${fmtDay(f.exportedAt.slice(0,10))}</b>${f.account ? ` · ${esc(f.account)}` : ""}</div>
+        <label class="chk"><input type="checkbox" id="bk-p" ${m.optP!==false?"checked":""}> <span>My own data: ${cnt.sp} spending/income entries, ${cnt.lo} loans, ${cnt.go} goals, settings</span></label>
+        <label class="chk"><input type="checkbox" id="bk-g" ${m.optG!==false && cnt.gr?"checked":""} ${cnt.gr?"":"disabled"}> <span>Split & Share: ${cnt.gr} group${cnt.gr===1?"":"s"}, ${cnt.ge} expenses and payments</span></label>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" data-bkrestore>Restore</button><button class="btn ghost" data-bkpick>Choose another file</button></div>`}
+      <div class="err" id="bk-err">${esc(m.err||"")}</div>
+      <div class="s" id="bk-prog"></div>
+    </div>
+  </div>
+  <footer><span></span><button class="btn" data-close>Close</button></footer>`;
+}
+function bindBackup(ov, m){
+  const $ = s => ov.querySelector(s);
+  ov.querySelectorAll("[data-bkpick]").forEach(b => b.onclick = () => {
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
+    inp.onchange = async () => { const file = inp.files[0]; if(!file) return;
+      try { const j = JSON.parse(await file.text());
+        if(j.app!=="CashNest" || j.kind!=="backup" || !j.personal) throw 0;
+        j.groups = j.groups || []; m.file = j; m.err = ""; }
+      catch { m.file = null; m.err = "That isn't a CashNest backup file."; }
+      renderModal(); };
+    inp.click();
+  });
+  const go_ = $("[data-bkrestore]"); if(!go_) return;
+  go_.onclick = async () => {
+    const f = m.file, doP = $("#bk-p").checked, doG = $("#bk-g") && $("#bk-g").checked;
+    if(!doP && !doG) return $("#bk-err").textContent = "Tick at least one thing to restore.";
+    go_.disabled = true; const prog = $("#bk-prog"); let done = 0, failed = 0, skippedGroups = 0;
+    const total = (doP ? f.personal.spending.length + f.personal.loans.length + f.personal.goals.length + 1 : 0) + (doG ? f.groups.reduce((a,g)=>a+1+g.expenses.length,0) : 0);
+    const tick = () => { done++; if(done % 20 === 0 || done===total) prog.textContent = `Restoring… ${done} of ${total}`; };
+    const tryDo = async fn => { try { await fn(); } catch { failed++; } tick(); };
+    if(doP){
+      for(const x of f.personal.spending) if(x && x.id) await tryDo(() => S.pStore.save("spending", x));
+      for(const x of f.personal.loans) if(x && x.id) await tryDo(() => S.pStore.save("loans", x));
+      for(const x of f.personal.goals) if(x && x.id) await tryDo(() => S.pStore.save("goals", x));
+      await tryDo(async () => { const merged = {...(f.personal.settings||{}), ...(S.settings||{})}; // keep anything you changed since; fill in what's missing
+        for(const k of ["budget","cf","cats","meIn","repayIncome"]) if(f.personal.settings && f.personal.settings[k] && typeof f.personal.settings[k]==="object") merged[k] = {...f.personal.settings[k], ...(S.settings[k]||{})};
+        S.settings = merged; await S.pStore.saveSettings(merged); });
+    }
+    if(doG && S.store){
+      for(const {group:g, expenses} of f.groups){
+        let ok = true;
+        try { const cur = (S.groups||[]).find(x=>x.id===g.id); const mem = new Map((cur ? cur.members : []).map(p=>[p.id,p]));
+          (g.members||[]).forEach(p => { if(!mem.has(p.id)) mem.set(p.id, p); });
+          await S.store.saveGroup({...(cur||g), members:[...mem.values()]}); } catch { ok = false; skippedGroups++; }
+        tick();
+        for(const e of expenses){ if(!ok){ tick(); continue; } if(e && e.id) await tryDo(() => S.store.saveExpense(g.id, e)); }
+      }
+    }
+    prog.textContent = "";
+    const msg = `✓ Restored ${done - failed - skippedGroups} item${done-failed===1?"":"s"}${failed ? ` · ${failed} couldn't be saved` : ""}${skippedGroups ? ` · ${skippedGroups} group${skippedGroups>1?"s":""} skipped (you're no longer a member)` : ""}.`;
+    toast(msg.replace("✓ ","")); m.file = null; m.err = ""; renderModal();
+    setTimeout(() => { const e = document.getElementById("bk-err"); if(e){ e.className = "s pos"; e.textContent = msg; } }, 30);
+    S.db && S.db.refreshAll && S.db.refreshAll(); loadGroupExpensesSoon();
+  };
+}
+EXTRA_MODALS.backup = [backupModal, bindBackup];
 function accountModal(m){
   return `<header><h3>👤 Your account</h3><button class="btn ghost sm" data-close>✕</button></header>
   <div class="body">
