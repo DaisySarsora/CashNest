@@ -139,7 +139,7 @@ th,td{padding:10px 16px;text-align:right;border-bottom:1px solid var(--line)}
 th:first-child,td:first-child{text-align:left}
 th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:500}
 tr:last-child td{border-bottom:0}
-.fab{position:fixed;right:28px;bottom:28px;box-shadow:0 8px 24px rgba(15,118,110,.35);padding:14px 20px;border-radius:999px;font-size:15px}
+.fab{position:fixed;z-index:40;right:28px;bottom:28px;box-shadow:0 8px 24px rgba(15,118,110,.35);padding:14px 20px;border-radius:999px;font-size:15px}
 .overlay{position:fixed;inset:0;background:rgba(20,20,18,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
 .modal{background:var(--panel);border-radius:18px;width:100%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.25);border:1px solid var(--line)}
 .modal header{padding:18px 20px 6px;display:flex;justify-content:space-between;align-items:center}
@@ -185,6 +185,12 @@ tr:last-child td{border-bottom:0}
   .catbar{grid-template-columns:100px 1fr 80px;padding:10px 12px}
   th,td{padding:9px 10px}
   .fab{right:16px;bottom:16px}
+  main{min-width:0;max-width:100vw;overflow-x:hidden}
+  .app{grid-template-columns:minmax(0,1fr)}
+  .tabs{flex-wrap:nowrap}.tabs .tab{flex:0 0 auto}
+  .ptable-wrap{overflow-x:auto}
+  .ptable .pcol{display:none}
+  .ptable td,.ptable th{padding:9px 8px}
 }
 
 /* ---------- CashNest ---------- */
@@ -459,6 +465,10 @@ table.cf-vert tr.v-cur td{box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 
 .cf-tog{border:0;background:none;cursor:pointer;color:var(--muted);font-size:12px;padding:0 6px 0 0;width:18px}
 .cf-tog:hover{color:var(--accent)}
 .more-row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:14px 0 4px}
+
+.mathbar{display:flex;gap:6px;margin-top:6px;flex-wrap:nowrap;grid-column:1/-1;width:100%;box-sizing:border-box;flex-basis:100%}
+.mathbar button{flex:1 1 0;min-width:36px;padding:9px 0;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font:600 17px/1 inherit;color:var(--ink,inherit);cursor:pointer}
+.mathbar button:active{background:var(--accent-soft)}
 </style>
 </head>
 <body>
@@ -3866,7 +3876,7 @@ function renderPeople(){
       </div>`).join("")}${personPaymentsHtml(p)}</td></tr>`;
     return `<tr class="pprow ${open?"open":""}">
         <td><button class="pname" data-person-open="${esc(p.key)}"><span class="caret">${open?"▾":"▸"}</span> <b>${esc(p.name)}</b></button><div class="s" style="padding-left:16px">${p.net>0 ? "owes you" : p.net<0 ? "you owe" : "even"} · ${p.loans.length + p.split.length} balance${p.loans.length + p.split.length>1?"s":""}</div></td>
-        <td class="num">${cell(ln)}</td><td class="num">${cell(sn)}</td>
+        <td class="num pcol">${cell(ln)}</td><td class="num pcol">${cell(sn)}</td>
         <td class="num">${p.net>0 ? `<b class="pos">${pm(p.net)}</b>` : p.net<0 ? `<b class="neg">−${pm(-p.net)}</b>` : "0.00"}</td>
         <td class="num" style="white-space:nowrap"><button class="btn sm primary" data-person-pay="${esc(p.key)}">＋ Payment</button> <button class="btn sm" data-person-more="${esc(p.key)}" title="${p.net>=0?"Lent them more":"Borrowed more"}">＋ ${p.net>=0 ? "Lent more" : "Borrowed"}</button></td>
       </tr>${detail}`; }).join("");
@@ -3874,9 +3884,9 @@ function renderPeople(){
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 class="sec" style="margin:0">👥 People: who owes who</h3>
       <button class="btn sm ${on?"on-btn":""}" data-act="loan-split-toggle" title="Include Split & Share balances here, in your loan totals and in My Future">${on ? "✓ Split & Share included" : "Split & Share not included"}</button></div>
     <div class="s" style="margin:4px 0 10px">Your own loans with each person (older balances, new borrowing) are combined with what your Split & Share groups say. <b>＋ Payment</b> records money received or paid and spreads it oldest-first across their balances. Click a name to see each balance.</div>
-    ${list.length ? `<div class="card ptable-wrap" style="margin-bottom:22px"><table class="ptable"><thead><tr><th>Person</th><th class="num">Own loans</th><th class="num">Split & Share</th><th class="num">Total</th><th></th></tr></thead>
+    ${list.length ? `<div class="card ptable-wrap" style="margin-bottom:22px"><table class="ptable"><thead><tr><th>Person</th><th class="num pcol">Own loans</th><th class="num pcol">Split & Share</th><th class="num">Total</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td><b>Total</b></td><td></td><td></td><td class="num"><span class="pos">+${pm(tO)}</span> / <span class="neg">−${pm(tW)}</span></td><td></td></tr></tfoot></table></div>`
+      <tfoot><tr><td><b>Total</b></td><td class="pcol"></td><td class="pcol"></td><td class="num"><span class="pos">+${pm(tO)}</span> / <span class="neg">−${pm(tW)}</span></td><td></td></tr></tfoot></table></div>`
       : `<div class="card empty" style="padding:18px;margin-bottom:22px"><p>Nobody owes you and you owe nobody. All square. ✓</p>${!on && sd.length ? `<p class="s">${sd.length} Split & Share balance${sd.length>1?"s are":" is"} hidden. Turn on “Split & Share included” to see ${sd.length>1?"them":"it"}.</p>` : ""}</div>`}`;
 }
 /* payments a person made to you (own loans + group payments), each can be counted as income or not */
@@ -4571,6 +4581,33 @@ async function boot(){
   refreshLiveRate();
 }
 boot();
+})();
+
+/* ---- phone number pads have no + − × ÷ ( ), so show a small maths bar under amount boxes on touch screens ---- */
+(() => {
+  const touch = () => matchMedia("(pointer: coarse)").matches;
+  const ok = el => el && el.tagName==="INPUT" && el.getAttribute("inputmode")==="decimal" && !["rate-in","l-rate"].includes(el.id);
+  let bar = null, target = null;
+  const remove = () => { bar && bar.remove(); bar = null; target = null; };
+  const insert = s => {
+    const el = target; if(!el) return;
+    const a = el.selectionStart ?? el.value.length, b = el.selectionEnd ?? a;
+    if(s==="⌫"){ if(a===b && a>0){ el.value = el.value.slice(0,a-1) + el.value.slice(b); el.setSelectionRange(a-1,a-1); } else { el.value = el.value.slice(0,a) + el.value.slice(b); el.setSelectionRange(a,a); } }
+    else { el.value = el.value.slice(0,a) + s + el.value.slice(b); el.setSelectionRange(a+s.length, a+s.length); }
+    el.dispatchEvent(new Event("input", {bubbles:true}));
+  };
+  document.addEventListener("focusin", e => {
+    if(!touch() || !ok(e.target)) return;
+    if(target === e.target && bar) return;
+    remove(); target = e.target;
+    bar = document.createElement("div"); bar.className = "mathbar";
+    bar.innerHTML = [["+","+"],["−","-"],["×","*"],["÷","/"],["(","("],[")",")"],["⌫","⌫"]].map(([l,v]) => `<button type="button" data-mk="${v}">${l}</button>`).join("");
+    bar.addEventListener("pointerdown", ev => ev.preventDefault());            // keep the keyboard open
+    bar.addEventListener("mousedown", ev => ev.preventDefault());
+    bar.addEventListener("click", ev => { const b = ev.target.closest("[data-mk]"); if(b){ ev.preventDefault(); ev.stopPropagation(); insert(b.dataset.mk); } });
+    target.insertAdjacentElement("afterend", bar);
+  });
+  document.addEventListener("focusout", e => { if(e.target === target) setTimeout(() => { if(document.activeElement !== target) remove(); }, 150); });
 })();
 </script>
 </body>
