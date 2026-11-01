@@ -768,7 +768,7 @@ function renderPage(){
   root.innerHTML = `
     <div class="mobile-top">
       <div class="brand" style="padding:0"><div class="logo">${LOGO}</div></div>
-      <select class="input" id="m-module" aria-label="Section">${MODULES.map(([id,ic,l])=>`<option value="${id}" ${id===mod?"selected":""}>${ic} ${l}</option>`).join("")}</select>
+      <select class="input" id="m-module" aria-label="Section">${MODULES.map(([id,ic,l])=>`<option value="${id}" ${id===mod?"selected":""}>${ic} ${l}</option>`).join("")}${S.sb ? `<option value="__account">👤 Account & password</option>` : ""}</select>
       ${split ? `<select class="input" id="m-group" aria-label="Group">
         ${S.groups.map(x=>`<option value="${esc(x.id)}" ${x.id===S.gid?"selected":""}>${esc(x.name)}</option>`).join("")}
         <option value="__new">＋ New group…</option></select>` : ""}
@@ -779,7 +779,7 @@ function renderPage(){
         <nav class="mods">
           ${MODULES.map(([id,ic,l]) => `<button class="nav ${id===mod?"on":""}" data-nav="${id}" title="${l}"><span class="ni">${ic}</span><span class="nl">${l}</span></button>${id==="split-share" && split ? groupsSub : ""}`).join("")}
         </nav>
-        <div class="side-foot">${S.sb ? `Signed in as <b>${esc(S.userEmail)}</b><br><button class="linkbtn" data-act="signout">Sign out</button>` : S.pLocal ? "Saved in this browser" : "Personal pages are private to you"}</div>
+        <div class="side-foot">${S.sb ? `Signed in as <b>${esc(S.userEmail)}</b><br><button class="linkbtn" data-act="account">🔑 Set password</button> · <button class="linkbtn" data-act="signout">Sign out</button>` : S.pLocal ? "Saved in this browser" : "Personal pages are private to you"}</div>
       </aside>
       <main>${notices}${curBar()}${content}</main>
     </div>
@@ -3037,6 +3037,7 @@ function personalClick(t){
     case "loan-split-toggle": saveSetting("loanSplit", !splitSync()); return true;
     case "go-cashflow": S.futTab = "cash"; try { localStorage.setItem("cashnest-futtab","cash"); } catch {} go("my-future"); return true;
     case "invite": if(group()) openModal({type:"invite"}); return true;
+    case "account": openModal({type:"account"}); return true;
     case "signout": S.sb && S.sb.auth.signOut().then(()=>location.reload()); return true;
     case "in-xlsx": insightsXlsx(); return true;
     case "bud-suggest": {
@@ -3057,7 +3058,7 @@ function personalChange(e){
   if(el.hasAttribute && el.hasAttribute("data-futloans")){ saveSetting("future.countLoans", el.checked); return true; }
   if(el.id==="sp-cat"){ S.spCat = el.value; render(); return true; }
   if(el.id==="bud-add"){ if(el.value){ S.budAdd.push(el.value); render(); setTimeout(()=>document.querySelector(`[data-setting="budget.limits.${el.value}"]`)?.focus(), 30); } return true; }
-  if(el.id==="m-module"){ go(el.value); return true; }
+  if(el.id==="m-module"){ if(el.value==="__account"){ el.value = S.module; openModal({type:"account"}); return true; } go(el.value); return true; }
   if(el.dataset.setting){
     const kind = el.dataset.kind, raw = el.value;
     let v;
@@ -3163,33 +3164,67 @@ function makeSupabaseDb(sb){
 function loadScript(src){
   return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
 }
+function accountModal(m){
+  return `<header><h3>👤 Your account</h3><button class="btn ghost sm" data-close>✕</button></header>
+  <div class="body">
+    <div class="s">Signed in as <b>${esc(S.userEmail)}</b></div>
+    <div class="field"><label>New password <span class="s">(at least 6 characters)</span></label><input class="input" id="ac-pass" type="password" minlength="6" autocomplete="new-password"></div>
+    <div class="field"><label>Type it again</label><input class="input" id="ac-pass2" type="password" minlength="6" autocomplete="new-password"></div>
+    <div class="s">Set a password if you've only used sign-in links, so you can sign in inside the app on your phone.</div>
+    <div class="err" id="ac-err"></div>
+  </div>
+  <footer><button class="btn ghost" data-act="signout">Sign out</button><div style="display:flex;gap:8px"><button class="btn" data-close>Close</button><button class="btn primary" data-acsave>Save password</button></div></footer>`;
+}
+function bindAccount(ov){
+  const $ = s => ov.querySelector(s);
+  $("[data-acsave]").onclick = async ev => {
+    const a = $("#ac-pass").value, b = $("#ac-pass2").value;
+    if(a.length < 6) return $("#ac-err").textContent = "Use at least 6 characters.";
+    if(a !== b) return $("#ac-err").textContent = "The two passwords don't match.";
+    const btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Saving…";
+    const {error} = await S.sb.auth.updateUser({password:a});
+    if(error){ btn.disabled = false; btn.textContent = "Save password"; return $("#ac-err").textContent = error.message || "Couldn't save. Try again."; }
+    toast("✓ Password saved"); closeModal();
+  };
+  ov.querySelector('[data-act="signout"]').onclick = () => S.sb.auth.signOut().then(() => location.reload());
+}
+EXTRA_MODALS.account = [accountModal, bindAccount];
 function renderLogin(sb, mode = "signin", msg = "", email = ""){
   const redirect = location.origin + location.pathname;
   root.innerHTML = `<div class="login"><div class="card login-card">
     <div class="brand" style="justify-content:center"><div class="logo">${LOGO}</div><h1>CashNest</h1></div>
     <p class="s" style="text-align:center;margin:0 0 16px">Spending, budgets, savings and shared costs in one nest.</p>
-    ${mode==="magic" ? "" : `<div class="seg" style="margin-bottom:14px"><button type="button" data-lm="signin" class="${mode==="signin"?"on":""}">Sign in</button><button type="button" data-lm="signup" class="${mode==="signup"?"on":""}">Create account</button></div>`}
+    ${mode==="newpass" ? `<h3 style="margin:0 0 6px;text-align:center">Set a new password</h3><p class="s" style="text-align:center;margin:0 0 14px">for ${esc(email)}</p>`
+      : mode==="forgot" ? `<h3 style="margin:0 0 6px;text-align:center">Forgot your password?</h3><p class="s" style="text-align:center;margin:0 0 14px">Enter your email and we'll send you a link to set a new one. This also works if you've only ever used sign-in links.</p>` : ""}
+    ${mode==="magic" || mode==="forgot" || mode==="newpass" ? "" : `<div class="seg" style="margin-bottom:14px"><button type="button" data-lm="signin" class="${mode==="signin"?"on":""}">Sign in</button><button type="button" data-lm="signup" class="${mode==="signup"?"on":""}">Create account</button></div>`}
     <form id="lf" class="login-form">
-      <div class="field"><label>Email</label><input class="input" id="lf-email" type="email" autocomplete="email" required value="${esc(email)}"></div>
-      ${mode==="magic" ? "" : `<div class="field"><label>Password</label><input class="input" id="lf-pass" type="password" minlength="6" autocomplete="${mode==="signup"?"new-password":"current-password"}" required></div>`}
-      <button class="btn primary" type="submit" style="justify-content:center">${mode==="signin"?"Sign in":mode==="signup"?"Create account":"Email me a sign-in link"}</button>
+      ${mode==="newpass" ? "" : `<div class="field"><label>Email</label><input class="input" id="lf-email" type="email" autocomplete="email" required value="${esc(email)}"></div>`}
+      ${mode==="magic" || mode==="forgot" ? "" : `<div class="field"><label>${mode==="newpass" ? "New password" : "Password"}</label><input class="input" id="lf-pass" type="password" minlength="6" autocomplete="${mode==="signin"?"current-password":"new-password"}" required>${mode==="signin" ? `<button type="button" class="linkbtn" data-lm="forgot" style="margin-top:6px;font-size:13px">Forgot password?</button>` : ""}</div>`}
+      ${mode==="newpass" ? `<div class="field"><label>Type it again</label><input class="input" id="lf-pass2" type="password" minlength="6" autocomplete="new-password" required></div>` : ""}
+      <button class="btn primary" type="submit" style="justify-content:center">${mode==="signin"?"Sign in":mode==="signup"?"Create account":mode==="forgot"?"Email me a reset link":mode==="newpass"?"Save new password":"Email me a sign-in link"}</button>
     </form>
     <div class="login-msg ${msg.startsWith("✓")?"ok":"bad"}">${esc(msg)}</div>
-    <button type="button" class="linkbtn" data-lm="${mode==="magic"?"signin":"magic"}">${mode==="magic"?"Use a password instead":"Email me a sign-in link instead"}</button>
+    ${mode==="newpass" ? "" : mode==="forgot" ? `<button type="button" class="linkbtn" data-lm="signin">Back to sign in</button>`
+      : `<button type="button" class="linkbtn" data-lm="${mode==="magic"?"signin":"magic"}">${mode==="magic"?"Use a password instead":"Email me a sign-in link instead"}</button>`}
   </div></div>`;
   root.querySelectorAll("[data-lm]").forEach(b => b.onclick = () => renderLogin(sb, b.dataset.lm, "", root.querySelector("#lf-email")?.value || ""));
   root.querySelector("#lf").onsubmit = async ev => {
     ev.preventDefault();
-    const em = root.querySelector("#lf-email").value.trim(), pw = root.querySelector("#lf-pass")?.value || "";
+    const em = (root.querySelector("#lf-email")?.value || email).trim(), pw = root.querySelector("#lf-pass")?.value || "";
+    if(mode==="newpass" && pw !== root.querySelector("#lf-pass2").value) return renderLogin(sb, mode, "The two passwords don't match.", email);
     const btn = root.querySelector("#lf button[type=submit]"); btn.disabled = true; btn.textContent = "Please wait…";
     let r;
     try {
       if(mode==="signin") r = await sb.auth.signInWithPassword({email:em, password:pw});
       else if(mode==="signup") r = await sb.auth.signUp({email:em, password:pw, options:{emailRedirectTo:redirect}});
+      else if(mode==="forgot") r = await sb.auth.resetPasswordForEmail(em, {redirectTo:redirect});
+      else if(mode==="newpass") r = await sb.auth.updateUser({password:pw});
       else r = await sb.auth.signInWithOtp({email:em, options:{emailRedirectTo:redirect}});
     } catch(e){ r = {error:e}; }
     if(r.error) return renderLogin(sb, mode, r.error.message || "Something went wrong. Try again.", em);
     if(mode==="magic") return renderLogin(sb, mode, "✓ Check your email and tap the sign-in link.", em);
+    if(mode==="forgot") return renderLogin(sb, mode, "✓ Check your email and tap the link to set a new password. It can take a minute; check spam too.", em);
+    if(mode==="newpass"){ try { sessionStorage.removeItem("cashnest-recovery"); } catch {} root.innerHTML = `<div class="loading">✓ Password saved. Opening CashNest…</div>`; setTimeout(() => location.reload(), 900); return; }
     if(mode==="signup" && !(r.data && r.data.session)) return renderLogin(sb, "signin", "✓ Account created. Check your email to confirm it, then sign in.", em);
     location.reload();
   };
@@ -3197,10 +3232,15 @@ function renderLogin(sb, mode = "signin", msg = "", email = ""){
 async function bootSupabase(cfg){
   try { await loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"); }
   catch { root.innerHTML = `<div class="loading">Couldn't load the sign-in library. Check your internet connection and refresh.</div>`; return null; }
+  if(/type=recovery/.test(location.hash + location.search)){ try { sessionStorage.setItem("cashnest-recovery", "1"); } catch {} }
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
+  let recovering = false;
+  sb.auth.onAuthStateChange(ev => { if(ev==="PASSWORD_RECOVERY"){ recovering = true; try { sessionStorage.setItem("cashnest-recovery", "1"); } catch {} } });
   const q = new URLSearchParams(location.search), join = q.get("join");
   if(join){ try { localStorage.setItem("cashnest-join", join); } catch {} history.replaceState(null, "", location.pathname + location.hash); }
   const {data:{session}} = await sb.auth.getSession();
+  let rec = recovering; try { rec = rec || sessionStorage.getItem("cashnest-recovery")==="1"; } catch {}
+  if(session && rec){ if(/access_token|type=recovery/.test(location.hash)) history.replaceState(null, "", location.pathname); renderLogin(sb, "newpass", "", session.user.email || ""); return null; }
   if(!session){
     renderLogin(sb, "signin", join ? "Sign in or create an account to join the group you were invited to." : "");
     sb.auth.onAuthStateChange((ev, s) => { if(s) location.reload(); });
